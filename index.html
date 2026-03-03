@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="SENTIENCE：为 GTA V 带来本地离线 AI NPC，支持语音、记忆与低配置运行。" />
+  <title>SENTIENCE - AI NPCs for GTA V</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <header class="hero" role="banner">
+    <div class="container hero-inner">
+      <p class="badge">SENTIENCE v3.0</p>
+      <h1>让 GTA V 的 NPC 拥有真正的灵魂、记忆和声音</h1>
+      <p class="subtitle">100% 本地运行 · 无需 API 费用 · 老显卡也能跑</p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="https://www.wanjiadongli.com/mods/295861" target="_blank" rel="noopener noreferrer">立即下载</a>
+        <a class="btn btn-secondary" href="https://guixngyu88730882.github.io/consciousness/" target="_blank" rel="noopener noreferrer">访问官网</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="section">
+      <div class="container">
+        <h2>核心特性</h2>
+        <div class="grid feature-grid">
+          <article class="card">
+            <h3>🤖 100% 本地 AI</h3>
+            <p>使用 LM Studio，本地推理，不依赖在线 API。</p>
+          </article>
+          <article class="card">
+            <h3>🗣️ 全双工语音</h3>
+            <p>Whisper 语音识别 + TTS 语音合成，支持自然交流。</p>
+          </article>
+          <article class="card">
+            <h3>🧠 长期记忆</h3>
+            <p>NPC 能记住玩家信息和历史互动，角色更真实。</p>
+          </article>
+          <article class="card">
+            <h3>💻 低配置可用</h3>
+            <p>针对低端硬件优化，GT 730 也可运行。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-alt">
+      <div class="container">
+        <h2>快速开始</h2>
+        <ol class="steps">
+          <li>
+            <h3>下载语言模型</h3>
+            <p>在 LM Studio 中搜索 <strong>qwen2.5-1.5b-instruct</strong>，选择 <strong>Q5_K_M</strong> 并下载。</p>
+          </li>
+          <li>
+            <h3>配置音频模型</h3>
+            <p>将 Whisper 模型放到 <code>C:\whisper-tiny\</code>，并确保包含 config、model、tokenizer、vocabulary 文件。</p>
+          </li>
+          <li>
+            <h3>检查运行环境</h3>
+            <p>安装 Python 3.10+ 并添加到环境变量。</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <h2>缺点与已修复项</h2>
+        <ul class="issues-list">
+          <li><strong>缺点：</strong>移动端容易出现横向溢出。<strong>修复：</strong>统一容器宽度和弹性布局，移除固定宽度元素。</li>
+          <li><strong>缺点：</strong>按钮过小且间距不足，触控误触概率高。<strong>修复：</strong>按钮最小高度 44px，增加点击区域和间距。</li>
+          <li><strong>缺点：</strong>缺少无障碍导航。<strong>修复：</strong>加入“跳到主要内容”快捷链接和清晰焦点样式。</li>
+          <li><strong>缺点：</strong>外链安全性不足。<strong>修复：</strong>所有新窗口链接增加 <code>rel="noopener noreferrer"</code>。</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <p>© SENTIENCE Community</p>
+      <p>QQ群：1079691553</p>
+    </div>
+  </footer>
+</body>
+</html>
