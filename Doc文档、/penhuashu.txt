@@ -1,0 +1,1 @@
+This mod runs fully local with LM Studio and open models. No cloud API, no fake demo, real in-game NPC response and behavior control.
