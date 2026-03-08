@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using GTA;
+using GTA.Math;
 using Newtonsoft.Json;
 
 namespace GTA5MOD2026
@@ -18,6 +20,7 @@ namespace GTA5MOD2026
 
     public class NPCMemory
     {
+        public string StableId { get; set; }
         public string Personality { get; set; }
         public List<MemoryEntry> ShortTerm { get; set; }
             = new List<MemoryEntry>();
@@ -32,11 +35,14 @@ namespace GTA5MOD2026
 
     public class MemoryManager
     {
-        private readonly Dictionary<int, NPCMemory> _memories
-            = new Dictionary<int, NPCMemory>();
+        private readonly Dictionary<string, NPCMemory> _memories
+            = new Dictionary<string, NPCMemory>();
+        private readonly Dictionary<int, string> _handleToStableId
+            = new Dictionary<int, string>();
 
         private const int MAX_SHORT_TERM = 5;
         private const int MAX_LONG_TERM = 10;
+        private const int STORAGE_VERSION = 2;
 
         private static readonly string SaveDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
@@ -46,18 +52,84 @@ namespace GTA5MOD2026
         {
             if (!Directory.Exists(SaveDir))
                 Directory.CreateDirectory(SaveDir);
+
+            LoadAll();
+        }
+
+        public static string MakeStableId(Ped ped)
+        {
+            return NPCState.MakeStableId(ped);
+        }
+
+        public void BindPed(Ped ped, string personality = "冷漠")
+        {
+            if (ped == null || !ped.Exists())
+                return;
+
+            string stableId = MakeStableId(ped);
+            _handleToStableId[ped.Handle] = stableId;
+            EnsureMemory(stableId, personality);
+        }
+
+        public void UnbindHandle(int npcHandle)
+        {
+            _handleToStableId.Remove(npcHandle);
+        }
+
+        public NPCMemory GetMemory(Ped ped, string personality)
+        {
+            if (ped == null || !ped.Exists())
+                return EnsureMemory("INVALID_PED", personality);
+
+            string stableId = MakeStableId(ped);
+            _handleToStableId[ped.Handle] = stableId;
+            return EnsureMemory(stableId, personality);
         }
 
         public NPCMemory GetMemory(int npcHandle, string personality)
         {
-            if (!_memories.ContainsKey(npcHandle))
+            string stableId;
+            if (!_handleToStableId.TryGetValue(npcHandle, out stableId))
+                stableId = $"runtime_{npcHandle}";
+            return EnsureMemory(stableId, personality);
+        }
+
+        private NPCMemory EnsureMemory(string stableId,
+            string personality)
+        {
+            if (string.IsNullOrWhiteSpace(stableId))
+                stableId = "UNKNOWN";
+
+            NPCMemory mem;
+            if (!_memories.TryGetValue(stableId, out mem))
             {
-                _memories[npcHandle] = new NPCMemory
+                mem = new NPCMemory
                 {
-                    Personality = personality
+                    StableId = stableId,
+                    Personality = string.IsNullOrEmpty(personality)
+                        ? "冷漠"
+                        : personality
                 };
+                _memories[stableId] = mem;
             }
-            return _memories[npcHandle];
+            else
+            {
+                mem.StableId = stableId;
+                if (!string.IsNullOrEmpty(personality))
+                    mem.Personality = personality;
+            }
+            return mem;
+        }
+
+        public void RecordInteraction(Ped ped,
+            string playerAction, string npcResponse,
+            string emotion, int threat, string time,
+            float gameTime)
+        {
+            var mem = GetMemory(ped, "冷漠");
+
+            RecordInteractionCore(mem, playerAction, npcResponse,
+                emotion, threat, time, gameTime);
         }
 
         public void RecordInteraction(int npcHandle,
@@ -65,9 +137,17 @@ namespace GTA5MOD2026
             string emotion, int threat, string time,
             float gameTime)
         {
-            if (!_memories.ContainsKey(npcHandle)) return;
-            var mem = _memories[npcHandle];
+            var mem = GetMemory(npcHandle, "冷漠");
 
+            RecordInteractionCore(mem, playerAction, npcResponse,
+                emotion, threat, time, gameTime);
+        }
+
+        private void RecordInteractionCore(NPCMemory mem,
+            string playerAction, string npcResponse,
+            string emotion, int threat, string time,
+            float gameTime)
+        {
             mem.ShortTerm.Add(new MemoryEntry
             {
                 PlayerAction = playerAction,
@@ -93,12 +173,22 @@ namespace GTA5MOD2026
                 mem.Relationship = Math.Max(-100,
                     mem.Relationship - 15);
             }
-            else if (playerAction == "approaching"
-                || playerAction == "very_close")
+            else if (playerAction == "insult")
+            {
+                mem.Relationship = Math.Max(-100,
+                    mem.Relationship - 10);
+            }
+            else if (playerAction == "compliment")
             {
                 mem.TimesFriendly++;
                 mem.Relationship = Math.Min(100,
-                    mem.Relationship + 5);
+                    mem.Relationship + 8);
+            }
+            else if (playerAction == "talk")
+            {
+                mem.TimesFriendly++;
+                mem.Relationship = Math.Min(100,
+                    mem.Relationship + 3);
             }
 
             mem.PlayerReputation = ComputeReputation(mem);
@@ -131,19 +221,64 @@ namespace GTA5MOD2026
             return "close_friend";
         }
 
-        public string BuildMemoryContext(int npcHandle)
+        public int EstimateTokens(string text)
         {
-            if (!_memories.ContainsKey(npcHandle))
+            if (string.IsNullOrEmpty(text)) return 0;
+
+            int chinese = 0;
+            int other = 0;
+            foreach (char c in text)
+            {
+                if (c >= 0x4e00 && c <= 0x9fff)
+                    chinese++;
+                else if (c >= 0x3400 && c <= 0x4dbf)
+                    chinese++;
+                else if (!char.IsWhiteSpace(c))
+                    other++;
+            }
+
+            return (int)(chinese * 1.5 + other * 0.4);
+        }
+
+        public string BuildMemoryContext(Ped ped, int tokenBudget = 150)
+        {
+            if (ped == null || !ped.Exists())
                 return "";
 
-            var mem = _memories[npcHandle];
+            var mem = GetMemory(ped, "冷漠");
+            return BuildMemoryContextInternal(mem, tokenBudget);
+        }
+
+        public string BuildMemoryContext(int npcHandle,
+            int tokenBudget = 150)
+        {
+            string stableId;
+            if (!_handleToStableId.TryGetValue(npcHandle, out stableId))
+                return "";
+
+            NPCMemory mem;
+            if (!_memories.TryGetValue(stableId, out mem))
+                return "";
+
+            return BuildMemoryContextInternal(mem, tokenBudget);
+        }
+
+        private string BuildMemoryContextInternal(NPCMemory mem,
+            int tokenBudget)
+        {
             var parts = new List<string>();
-            parts.Add($"关系:{mem.PlayerReputation}({mem.Relationship})");
+            int usedTokens = 0;
+
+            AddPartWithBudget(parts, ref usedTokens, tokenBudget,
+                $"关系:{mem.PlayerReputation}({mem.Relationship})",
+                true);
 
             if (mem.TimesAttacked > 0)
-                parts.Add($"被攻击{mem.TimesAttacked}次");
+                AddPartWithBudget(parts, ref usedTokens, tokenBudget,
+                    $"被攻击{mem.TimesAttacked}次", false);
             if (mem.TotalInteractions > 3)
-                parts.Add($"见过{mem.TotalInteractions}次");
+                AddPartWithBudget(parts, ref usedTokens, tokenBudget,
+                    $"见过{mem.TotalInteractions}次", false);
 
             var recent = mem.ShortTerm
                 .Skip(Math.Max(0, mem.ShortTerm.Count - 2))
@@ -151,18 +286,122 @@ namespace GTA5MOD2026
 
             foreach (var entry in recent)
             {
-                parts.Add($"上次:玩家{entry.PlayerAction}→你{entry.NpcResponse}");
+                if (!AddPartWithBudget(parts, ref usedTokens,
+                    tokenBudget,
+                    $"上次:玩家{entry.PlayerAction}→你{entry.NpcResponse}",
+                    false))
+                    break;
+            }
+
+            for (int i = mem.LongTerm.Count - 1; i >= 0; i--)
+            {
+                if (!AddPartWithBudget(parts, ref usedTokens,
+                    tokenBudget, $"记忆:{mem.LongTerm[i]}", false))
+                    break;
             }
 
             return string.Join("。", parts);
         }
 
+        private bool AddPartWithBudget(List<string> parts,
+            ref int usedTokens, int tokenBudget, string part,
+            bool forceAdd)
+        {
+            if (string.IsNullOrWhiteSpace(part))
+                return true;
+
+            int partTokens = EstimateTokens(part) + 2;
+            if (!forceAdd
+                && tokenBudget > 0
+                && usedTokens + partTokens > tokenBudget)
+                return false;
+
+            parts.Add(part);
+            usedTokens += partTokens;
+            return true;
+        }
+
+        public void LoadAll()
+        {
+            try
+            {
+                string filePath = Path.Combine(
+                    SaveDir, "npc_memory.json");
+                if (!File.Exists(filePath))
+                    return;
+
+                string json = File.ReadAllText(filePath);
+                if (string.IsNullOrWhiteSpace(json))
+                    return;
+
+                var root = JsonConvert.DeserializeObject
+                    <Dictionary<string, object>>(json);
+                if (root != null
+                    && root.ContainsKey("memories"))
+                {
+                    var store = JsonConvert.DeserializeObject<
+                        MemoryStore>(json);
+                    if (store?.Memories != null)
+                    {
+                        _memories.Clear();
+                        foreach (var kv in store.Memories)
+                        {
+                            var mem = kv.Value ?? new NPCMemory();
+                            mem.StableId = kv.Key;
+                            if (string.IsNullOrEmpty(mem.Personality))
+                                mem.Personality = "冷漠";
+                            _memories[kv.Key] = mem;
+                        }
+                    }
+                    return;
+                }
+
+                var stableDict = JsonConvert.DeserializeObject<
+                    Dictionary<string, NPCMemory>>(json);
+                if (stableDict != null && stableDict.Count > 0)
+                {
+                    _memories.Clear();
+                    foreach (var kv in stableDict)
+                    {
+                        var mem = kv.Value ?? new NPCMemory();
+                        mem.StableId = kv.Key;
+                        if (string.IsNullOrEmpty(mem.Personality))
+                            mem.Personality = "冷漠";
+                        _memories[kv.Key] = mem;
+                    }
+                    return;
+                }
+
+                var legacy = JsonConvert.DeserializeObject<
+                    Dictionary<int, NPCMemory>>(json);
+                if (legacy != null && legacy.Count > 0)
+                {
+                    _memories.Clear();
+                    foreach (var kv in legacy)
+                    {
+                        string stableId = $"legacy_{kv.Key}";
+                        var mem = kv.Value ?? new NPCMemory();
+                        mem.StableId = stableId;
+                        if (string.IsNullOrEmpty(mem.Personality))
+                            mem.Personality = "冷漠";
+                        _memories[stableId] = mem;
+                    }
+                }
+            }
+            catch { }
+        }
         public void SaveAll()
         {
             try
             {
-                string json = JsonConvert.SerializeObject(
-                    _memories, Formatting.Indented);
+                var store = new MemoryStore
+                {
+                    Version = STORAGE_VERSION,
+                    SavedAtUtc = DateTime.UtcNow,
+                    Memories = _memories
+                };
+                string json = JsonConvert.SerializeObject(store,
+                    Formatting.Indented);
                 File.WriteAllText(
                     Path.Combine(SaveDir, "npc_memory.json"), json);
             }
@@ -171,12 +410,28 @@ namespace GTA5MOD2026
 
         public void ClearMemory(int npcHandle)
         {
-            _memories.Remove(npcHandle);
+            string stableId;
+            if (_handleToStableId.TryGetValue(npcHandle,
+                out stableId))
+            {
+                _memories.Remove(stableId);
+                _handleToStableId.Remove(npcHandle);
+            }
         }
 
         public void ClearAll()
         {
             _memories.Clear();
+            _handleToStableId.Clear();
+        }
+
+        private class MemoryStore
+        {
+            public int Version { get; set; }
+            public DateTime SavedAtUtc { get; set; }
+            public Dictionary<string, NPCMemory> Memories
+                { get; set; }
+                = new Dictionary<string, NPCMemory>();
         }
     }
 }

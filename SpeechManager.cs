@@ -18,11 +18,16 @@ namespace GTA5MOD2026
             Environment.GetFolderPath(
                 Environment.SpecialFolder.MyDocuments),
             "GTA5MOD2026", "temp");
-        private static readonly string ModelPath
-            = @"C:\whisper-tiny";
+        private readonly string _modelPath;
 
         public SpeechManager()
         {
+            var config = ModConfig.Load();
+            _modelPath = string.IsNullOrWhiteSpace(
+                config?.STT?.WhisperModelPath)
+                ? @"C:\whisper-tiny"
+                : config.STT.WhisperModelPath;
+
             if (!Directory.Exists(TempDir))
                 Directory.CreateDirectory(TempDir);
 
@@ -32,72 +37,67 @@ namespace GTA5MOD2026
         private void WriteSttScript()
         {
             string scriptPath = Path.Combine(TempDir, "stt.py");
+            string resultFile = Path.Combine(TempDir, "stt_result.txt")
+                .Replace("\\", "\\\\");
 
-            string pyScript = @"
+            string pyScript = $@"
 import sys
 import os
 import tempfile
 import wave
-
 import sounddevice as sd
 import numpy as np
 
-def main():
-    DURATION = 5
-    SAMPLE_RATE = 16000
-    MODEL_PATH = r'" + ModelPath + @"'
+DURATION = 5
+SAMPLE_RATE = 16000
+MODEL_PATH = r'{_modelPath.Replace("\\", "\\\\")}'
+RESULT_FILE = r'{resultFile.Replace("\\\\", "\\")}'
 
-    try:
-        print('REC_START', flush=True)
-        audio = sd.rec(int(DURATION * SAMPLE_RATE),
-                       samplerate=SAMPLE_RATE,
-                       channels=1, dtype='int16')
-        sd.wait()
-        print('REC_DONE', flush=True)
+print('REC_START', flush=True)
+audio = sd.rec(int(DURATION * SAMPLE_RATE),
+               samplerate=SAMPLE_RATE,
+               channels=1, dtype='int16')
+sd.wait()
+print('REC_DONE', flush=True)
 
-        vol = np.abs(audio).mean()
-        print(f'VOLUME:{vol}', flush=True)
-        if vol < 10:
-            print('ERROR:too_quiet')
-            return
+vol = np.abs(audio).mean()
+if vol < 10:
+    with open(RESULT_FILE, 'w', encoding='utf-8') as f:
+        f.write('ERROR:too_quiet')
+    sys.exit(0)
 
-        tmp = os.path.join(tempfile.gettempdir(), 'gta_stt.wav')
-        with wave.open(tmp, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(SAMPLE_RATE)
-            wf.writeframes(audio.tobytes())
+tmp = os.path.join(tempfile.gettempdir(), 'gta_stt.wav')
+with wave.open(tmp, 'wb') as wf:
+    wf.setnchannels(1)
+    wf.setsampwidth(2)
+    wf.setframerate(SAMPLE_RATE)
+    wf.writeframes(audio.tobytes())
 
-        print('TRANSCRIBING', flush=True)
-        try:
-            os.environ['HF_HUB_OFFLINE'] = '1'
-            from faster_whisper import WhisperModel
-            model = WhisperModel(MODEL_PATH, device='cpu', compute_type='int8')
-            segments, info = model.transcribe(
-                tmp,
-                language='zh',
-                beam_size=3,
-                best_of=3
-            )
-            text = ''.join([seg.text for seg in segments]).strip()
+print('TRANSCRIBING', flush=True)
+try:
+    os.environ['HF_HUB_OFFLINE'] = '1'
+    from faster_whisper import WhisperModel
+    model = WhisperModel(MODEL_PATH, device='cpu',
+                         compute_type='int8')
+    segments, info = model.transcribe(
+        tmp, language='zh', beam_size=3, best_of=3)
+    text = ''.join([seg.text for seg in segments]).strip()
 
-            if text and len(text) > 0:
-                print('RESULT:' + text)
-            else:
-                print('ERROR:empty')
-        except Exception as e:
-            print('ERROR:' + str(e))
+    with open(RESULT_FILE, 'w', encoding='utf-8') as f:
+        if text and len(text) > 0:
+            f.write('RESULT:' + text)
+        else:
+            f.write('ERROR:no_speech')
+except Exception as e:
+    with open(RESULT_FILE, 'w', encoding='utf-8') as f:
+        f.write('ERROR:' + str(e))
 
-        try:
-            os.remove(tmp)
-        except:
-            pass
+try:
+    os.remove(tmp)
+except:
+    pass
 
-    except Exception as e:
-        print('ERROR:' + str(e))
-
-if __name__ == '__main__':
-    main()
+print('DONE', flush=True)
 ";
 
             try
@@ -121,8 +121,12 @@ if __name__ == '__main__':
                 {
                     string scriptPath = Path.Combine(
                         TempDir, "stt.py");
+                    string resultFile = Path.Combine(
+                        TempDir, "stt_result.txt");
                     if (!File.Exists(scriptPath))
                         WriteSttScript();
+                    if (File.Exists(resultFile))
+                        File.Delete(resultFile);
 
                     var psi = new ProcessStartInfo
                     {
@@ -156,46 +160,41 @@ if __name__ == '__main__':
                             return;
                         }
 
-                        string output = proc.StandardOutput
-                            .ReadToEnd().Trim();
-                        string errors = proc.StandardError
-                            .ReadToEnd().Trim();
+                        if (File.Exists(resultFile))
+                        {
+                            string content = File.ReadAllText(
+                                resultFile,
+                                System.Text.Encoding.UTF8).Trim();
 
-                        string result = null;
-                        foreach (var line in output.Split('\n'))
-                        {
-                            string l = line.Trim();
-                            if (l.StartsWith("RESULT:"))
-                            {
-                                result = l.Substring(7).Trim();
-                                break;
-                            }
-                        }
+                            try { File.Delete(resultFile); }
+                            catch { }
 
-                        if (!string.IsNullOrEmpty(result))
-                        {
-                            _mainQueue.Enqueue(() =>
-                                onResult?.Invoke(result));
-                        }
-                        else
-                        {
-                            string errMsg = "Unknown error";
-                            foreach (var line in output.Split('\n'))
+                            if (content.StartsWith("RESULT:"))
                             {
-                                string l = line.Trim();
-                                if (l.StartsWith("ERROR:"))
+                                string text = content
+                                    .Substring(7).Trim();
+                                if (!string.IsNullOrEmpty(text))
                                 {
-                                    errMsg = l.Substring(6);
-                                    break;
+                                    _mainQueue.Enqueue(() =>
+                                        onResult?.Invoke(text));
+                                    return;
                                 }
                             }
 
-                            if (!string.IsNullOrEmpty(errors))
-                                errMsg += " | " + errors;
+                            string errMsg = content
+                                .StartsWith("ERROR:")
+                                ? content.Substring(6)
+                                : "Unknown error";
 
                             _mainQueue.Enqueue(() =>
                                 onError?.Invoke(
                                     new Exception(errMsg)));
+                        }
+                        else
+                        {
+                            _mainQueue.Enqueue(() =>
+                                onError?.Invoke(
+                                    new Exception("No result file")));
                         }
                     }
                 }

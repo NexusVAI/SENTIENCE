@@ -1,0 +1,38 @@
+# AI NPCS 安装器用户手册
+
+## 1. 功能概览
+- 自动检测 GTA V 安装目录（Steam / Epic / Rockstar）
+- 一键安装核心 MOD 文件并自动回滚失败安装
+- 环境检测（Python、依赖包、Whisper、ScriptHook、资源完整性）
+- 语音服务器启动/停止
+- 浅色/深色主题切换
+- 官网入口：https://nexusvai.github.io/NexusV/
+
+## 2. 快速开始
+1. 运行 `AI_NPCS.exe`
+2. 点击 `检测 GTA V`
+3. 点击 `检测环境`，确认必需项全部通过
+4. 点击 `安装 MOD` 完成一键安装
+5. 点击 `完整测试` 完成联调验证
+
+## 3. 安装结果
+- 脚本目录写入：
+  - `GTA5MOD2026.dll`
+  - `Newtonsoft.Json.dll`
+  - `NAudio.dll`
+- GTA 根目录写入：
+  - `ScriptHookVDotNet.asi`
+  - `ScriptHookVDotNet2.dll`
+  - `ScriptHookVDotNet3.dll`
+- 用户配置：
+  - `%USERPROFILE%\Documents\GTA5MOD2026\config.ini`
+
+## 4. 故障处理
+- 若安装失败，程序会自动回滚到安装前状态
+- 若提示缺少 ScriptHookV，请先安装 `ScriptHookV.dll` 与 `dinput8.dll`
+- 若语音不可用，请先安装 Python 与依赖，再下载 Whisper 模型
+
+## 5. 更新策略
+- 离线更新：覆盖发布目录全部文件
+- 在线更新：发布增量包，仅替换变更文件
+- 建议先备份 `Documents\GTA5MOD2026\config.ini`
