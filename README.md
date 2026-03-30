@@ -57,7 +57,7 @@
 | ScriptHookV | GTA 模组基础依赖 |
 | ScriptHookVDotNet3 | C# 脚本运行依赖（游戏目录） |
 | .NET Framework | 4.8（项目目标框架 net48） |
-| Visual Studio | 2019+（推荐 2022） |
+| Visual Studio | 2022+（推荐 2026） |
 | Python | 3.9+（用于语音服务） |
 
 ## 快速开始
