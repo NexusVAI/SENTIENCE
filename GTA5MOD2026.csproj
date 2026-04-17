@@ -8,10 +8,13 @@
 
   <ItemGroup>
     <Compile Remove="必看函数模组开发\**" />
+    <Compile Remove="增强版函数\**" />
     <Compile Remove="obj\**" />
     <Compile Remove="bin\**" />
     <EmbeddedResource Remove="必看函数模组开发\**" />
+    <EmbeddedResource Remove="增强版函数\**" />
     <None Remove="必看函数模组开发\**" />
+    <None Remove="增强版函数\**" />
   </ItemGroup>
 
   <ItemGroup>

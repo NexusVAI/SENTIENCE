@@ -79,7 +79,7 @@ namespace GTA5MOD2026
         public NPCMemory GetMemory(Ped ped, string personality)
         {
             if (ped == null || !ped.Exists())
-                return EnsureMemory("INVALID_PED", personality);
+                return CreateTransientMemory(personality);
 
             string stableId = MakeStableId(ped);
             _handleToStableId[ped.Handle] = stableId;
@@ -90,7 +90,7 @@ namespace GTA5MOD2026
         {
             string stableId;
             if (!_handleToStableId.TryGetValue(npcHandle, out stableId))
-                stableId = $"runtime_{npcHandle}";
+                return CreateTransientMemory(personality);
             return EnsureMemory(stableId, personality);
         }
 
@@ -115,10 +115,22 @@ namespace GTA5MOD2026
             else
             {
                 mem.StableId = stableId;
-                if (!string.IsNullOrEmpty(personality))
+                if (!string.IsNullOrEmpty(personality)
+                    && string.IsNullOrEmpty(mem.Personality))
                     mem.Personality = personality;
             }
             return mem;
+        }
+
+        private NPCMemory CreateTransientMemory(string personality)
+        {
+            return new NPCMemory
+            {
+                StableId = "TRANSIENT",
+                Personality = string.IsNullOrEmpty(personality)
+                    ? "冷漠"
+                    : personality
+            };
         }
 
         public void RecordInteraction(Ped ped,
@@ -126,7 +138,7 @@ namespace GTA5MOD2026
             string emotion, int threat, string time,
             float gameTime)
         {
-            var mem = GetMemory(ped, "冷漠");
+            var mem = GetMemory(ped, null);
 
             RecordInteractionCore(mem, playerAction, npcResponse,
                 emotion, threat, time, gameTime);
@@ -137,7 +149,7 @@ namespace GTA5MOD2026
             string emotion, int threat, string time,
             float gameTime)
         {
-            var mem = GetMemory(npcHandle, "冷漠");
+            var mem = GetMemory(npcHandle, null);
 
             RecordInteractionCore(mem, playerAction, npcResponse,
                 emotion, threat, time, gameTime);
@@ -245,7 +257,13 @@ namespace GTA5MOD2026
             if (ped == null || !ped.Exists())
                 return "";
 
-            var mem = GetMemory(ped, "冷漠");
+            string stableId = MakeStableId(ped);
+            _handleToStableId[ped.Handle] = stableId;
+
+            NPCMemory mem;
+            if (!_memories.TryGetValue(stableId, out mem))
+                return "";
+
             return BuildMemoryContextInternal(mem, tokenBudget);
         }
 
@@ -402,8 +420,13 @@ namespace GTA5MOD2026
                 };
                 string json = JsonConvert.SerializeObject(store,
                     Formatting.Indented);
-                File.WriteAllText(
-                    Path.Combine(SaveDir, "npc_memory.json"), json);
+                string filePath = Path.Combine(
+                    SaveDir, "npc_memory.json");
+                string tempPath = filePath + ".tmp";
+                File.WriteAllText(tempPath, json);
+                if (File.Exists(filePath))
+                    File.Delete(filePath);
+                File.Move(tempPath, filePath);
             }
             catch { }
         }

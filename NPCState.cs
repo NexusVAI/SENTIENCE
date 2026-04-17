@@ -1,4 +1,4 @@
-using GTA;
+﻿using GTA;
 using GTA.Math;
 using System;
 using System.Collections.Generic;
@@ -25,6 +25,7 @@ namespace GTA5MOD2026
     {
         public Ped Ped;
         public string StableId = "";
+        public int Generation = 1;
         public string UniqueId = Guid.NewGuid().ToString("N")
             .Substring(0, 8);
         public bool IsMale = true;
@@ -99,11 +100,44 @@ namespace GTA5MOD2026
 
             uint model = (uint)ped.Model.Hash;
             Vector3 pos = ped.Position;
-            int x = (int)Math.Round(pos.X / 2.0) * 2;
-            int y = (int)Math.Round(pos.Y / 2.0) * 2;
-            int z = (int)Math.Round(pos.Z / 5.0) * 5;
+            int x = (int)Math.Round(pos.X);
+            int y = (int)Math.Round(pos.Y);
+            int z = (int)Math.Round(pos.Z * 2f);
 
-            return $"{model:X8}_{x}_{y}_{z}";
+            int maxHealth = ped.MaxHealth;
+            int armor = ped.Armor;
+            int pedType = GTA.Native.Function.Call<int>(
+                GTA.Native.Hash.GET_PED_TYPE, ped.Handle);
+            int gender = GTA.Native.Function.Call<bool>(
+                GTA.Native.Hash.IS_PED_MALE, ped.Handle) ? 1 : 0;
+
+            int variationHash = 17;
+            int[] components = { 0, 1, 2, 3, 4, 6, 8, 11 };
+            foreach (int componentId in components)
+            {
+                int drawable = GTA.Native.Function.Call<int>(
+                    GTA.Native.Hash.GET_PED_DRAWABLE_VARIATION,
+                    ped.Handle, componentId);
+                int texture = GTA.Native.Function.Call<int>(
+                    GTA.Native.Hash.GET_PED_TEXTURE_VARIATION,
+                    ped.Handle, componentId);
+                variationHash = (variationHash * 31) + drawable;
+                variationHash = (variationHash * 31) + texture;
+            }
+
+            int[] props = { 0, 1, 2, 6, 7 };
+            foreach (int propId in props)
+            {
+                int prop = GTA.Native.Function.Call<int>(
+                    GTA.Native.Hash.GET_PED_PROP_INDEX,
+                    ped.Handle, propId, 0);
+                variationHash = (variationHash * 31) + prop;
+            }
+
+            return string.Format(
+                "{0:X8}_{1}_{2}_{3}_{4}_{5}_{6}",
+                model, gender, pedType, maxHealth, armor,
+                variationHash, string.Format("{0}_{1}_{2}", x, y, z));
         }
 
         public void RecordConversationTurn(string role,

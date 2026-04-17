@@ -546,8 +546,6 @@ namespace GTA5MOD2026
                     {
                         NPCManager.Instance.RequestNPCChat(
                             state, nearest);
-                        state.IsInteracting = true;
-                        nearest.IsInteracting = true;
                         state.LastRequestTime =
                             Game.GameTime / 1000f;
                         nearest.LastRequestTime =

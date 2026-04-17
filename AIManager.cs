@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Net.Http;
@@ -88,21 +88,37 @@ namespace GTA5MOD2026
             return currentModel;
         }
 
+        public string ResolveEndpointForModel(string modelName)
+        {
+            if (Config.LLM.Provider == "cloud")
+                return Config.LLM.CloudEndpoint;
+
+            if (!string.IsNullOrWhiteSpace(modelName)
+                && string.Equals(modelName.Trim(),
+                    Config.LLM.LightModel?.Trim(),
+                    StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(
+                    Config.LLM.LightEndpoint))
+            {
+                return Config.LLM.LightEndpoint;
+            }
+
+            return Config.LLM.LocalEndpoint;
+        }
+
         private RequestBuildResult BuildRequest(
-            string jsonPayload, bool stream)
+            string jsonPayload, bool stream,
+            string endpointOverride = null)
         {
             var payloadObj = JObject.Parse(jsonPayload);
+            string currentModel = ResolveCurrentModel(payloadObj);
+            bool isQwen3 = !string.IsNullOrWhiteSpace(currentModel)
+                && currentModel.ToLower().Contains("qwen3");
+
             if (stream)
                 payloadObj["stream"] = true;
             else
                 payloadObj.Remove("stream");
-
-            string endpoint = Config.LLM.Provider == "cloud"
-                ? Config.LLM.CloudEndpoint
-                : Config.LLM.LocalEndpoint;
-
-            string currentModel = ResolveCurrentModel(payloadObj);
-            bool isQwen3 = currentModel.ToLower().Contains("qwen3");
 
             if (isQwen3 && Config.LLM.Provider != "cloud")
             {
@@ -119,6 +135,19 @@ namespace GTA5MOD2026
                 payloadObj.Remove("chat_template_kwargs");
                 payloadObj.Remove("extra_body");
             }
+
+            int maxTokens = payloadObj["max_tokens"]?.Value<int?>() ?? 0;
+            if (isQwen3
+                && Config.Performance.MaxTokensThinking > 0
+                && Config.Performance.MaxTokensThinking > maxTokens)
+            {
+                payloadObj["max_tokens"] =
+                    Config.Performance.MaxTokensThinking;
+            }
+
+            string endpoint = string.IsNullOrWhiteSpace(endpointOverride)
+                ? ResolveEndpointForModel(currentModel)
+                : endpointOverride;
 
             string cleanPayload = payloadObj
                 .ToString(Newtonsoft.Json.Formatting.None);
@@ -148,24 +177,12 @@ namespace GTA5MOD2026
         public async Task<string> PostRawAsync(string endpoint,
             string jsonPayload, int timeoutSeconds = 30)
         {
+            var build = BuildRequest(
+                jsonPayload, false, endpoint);
             using (var cts = new CancellationTokenSource(
                 TimeSpan.FromSeconds(timeoutSeconds)))
-            using (var request = new HttpRequestMessage(
-                HttpMethod.Post, endpoint))
+            using (var request = build.Request)
             {
-                request.Content = new StringContent(
-                    jsonPayload, Encoding.UTF8,
-                    "application/json");
-
-                if (Config.LLM.Provider == "cloud"
-                    && !string.IsNullOrEmpty(Config.LLM.CloudAPIKey))
-                {
-                    request.Headers.Authorization =
-                        new AuthenticationHeaderValue(
-                            "Bearer",
-                            Config.LLM.CloudAPIKey.Trim());
-                }
-
                 using (var resp = await _http.SendAsync(
                     request, cts.Token).ConfigureAwait(false))
                 {
@@ -185,10 +202,18 @@ namespace GTA5MOD2026
             int npcHandle,
             string jsonPayload,
             Action<AIResponse> onSuccess,
-            Action<Exception> onError = null)
+            Action<Exception> onError = null,
+            string requestId = null,
+            string stableId = null,
+            int generation = 0)
         {
             if (!_npcPending.TryAdd(npcHandle, true))
+            {
+                _mainQueue.Enqueue(() => onError?.Invoke(
+                    new InvalidOperationException(
+                        "NPC request already pending.")));
                 return;
+            }
 
             DebugLog($"Sending:\n{jsonPayload}");
 
@@ -210,7 +235,6 @@ namespace GTA5MOD2026
                             DebugLog($"=== REQUEST ===");
                             DebugLog($"Provider: {Config.LLM.Provider}");
                             DebugLog($"Endpoint: {build.Endpoint}");
-                            DebugLog($"API Key: {(string.IsNullOrEmpty(Config.LLM.CloudAPIKey) ? "EMPTY!" : Config.LLM.CloudAPIKey.Substring(0, Math.Min(8, Config.LLM.CloudAPIKey.Length)) + "...")}");
                             DebugLog($"Model: {build.Model}");
                             DebugLog($"Payload: {build.Payload}");
 
@@ -230,6 +254,10 @@ namespace GTA5MOD2026
 
                                     var aiResp = ParseAIResponse(body);
                                     aiResp.NpcHandle = npcHandle;
+                                    aiResp.RequestId = requestId;
+                                    aiResp.StableId = stableId;
+                                    aiResp.HandleSnapshot = npcHandle;
+                                    aiResp.Generation = generation;
 
                                     _mainQueue.Enqueue(()
                                         => onSuccess?.Invoke(aiResp));
@@ -260,10 +288,18 @@ namespace GTA5MOD2026
             string jsonPayload,
             Action<string> onPartialDialogue,
             Action<AIResponse> onComplete,
-            Action<Exception> onError = null)
+            Action<Exception> onError = null,
+            string requestId = null,
+            string stableId = null,
+            int generation = 0)
         {
             if (!_npcPending.TryAdd(npcHandle, true))
+            {
+                _mainQueue.Enqueue(() => onError?.Invoke(
+                    new InvalidOperationException(
+                        "NPC request already pending.")));
                 return;
+            }
 
             Task.Run(async () =>
             {
@@ -342,23 +378,14 @@ namespace GTA5MOD2026
                                                 string rd = delta[
                                                     "reasoning_content"]
                                                     ?.ToString();
-                                                string token = cd;
-                                                if (string.IsNullOrEmpty(token))
-                                                    token = rd;
-
-                                                if (!string.IsNullOrEmpty(token))
-                                                    fullContent.Append(token);
+                                                if (!string.IsNullOrEmpty(cd))
+                                                    fullContent.Append(cd);
                                                 if (!string.IsNullOrEmpty(rd))
                                                     fullReasoning.Append(rd);
 
-                                                string current =
-                                                    fullContent.Length > 0
-                                                        ? fullContent.ToString()
-                                                        : fullReasoning.ToString();
-
                                                 string dialogue =
                                                     ExtractPartialDialogue(
-                                                        current);
+                                                        fullContent.ToString());
 
                                                 if (!string.IsNullOrEmpty(
                                                         dialogue)
@@ -396,11 +423,18 @@ namespace GTA5MOD2026
                                             : fullReasoning.ToString();
                                     DebugLog($"Stream final text: [{finalText}]");
 
-                                    finalText = StripThinkingTags(finalText);
+                                    finalText = ChooseModelText(
+                                        fullContent.ToString(),
+                                        fullReasoning.ToString());
                                     DebugLog($"After strip: [{finalText}]");
 
-                                    var result = ParsePipeFormat(finalText);
+                                    var result = ParseModelText(
+                                        finalText, false);
                                     result.NpcHandle = npcHandle;
+                                    result.RequestId = requestId;
+                                    result.StableId = stableId;
+                                    result.HandleSnapshot = npcHandle;
+                                    result.Generation = generation;
 
                                     _mainQueue.Enqueue(()
                                         => onComplete?.Invoke(result));
@@ -554,8 +588,7 @@ namespace GTA5MOD2026
             {
                 string cut = dialogue.Substring(0, maxLen);
                 int lastPunc = cut.LastIndexOfAny(
-                    new[] { '，', '。', '！', '？',
-                            '…', '~', ',', '!', '?' });
+                    new[] { '，', '。', '！', '？', '…', '~', ',', '!', '?' });
                 dialogue = lastPunc > maxLen / 2
                     ? cut.Substring(0, lastPunc + 1)
                     : cut;
@@ -576,7 +609,92 @@ namespace GTA5MOD2026
             return dialogue;
         }
 
-        private AIResponse ParsePipeFormat(string text)
+        private string ChooseModelText(string contentText,
+            string reasoningText)
+        {
+            string primary = StripThinkingTags(contentText ?? "")
+                .Trim();
+            if (!string.IsNullOrWhiteSpace(primary))
+                return primary;
+
+            string fallback = StripThinkingTags(reasoningText ?? "")
+                .Trim();
+            if (string.IsNullOrWhiteSpace(fallback))
+                return fallback;
+
+            var lines = fallback.Split(
+                new[] { '\n', '\r' },
+                StringSplitOptions.RemoveEmptyEntries);
+
+            for (int i = lines.Length - 1; i >= 0; i--)
+            {
+                string candidate = lines[i].Trim();
+                if (candidate.Contains("|")
+                    || candidate.Contains("{")
+                    || ContainsChinese(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return fallback;
+        }
+
+        private string NormalizeAction(string action)
+        {
+            if (string.IsNullOrWhiteSpace(action))
+                return "speak";
+
+            string normalized = action.Trim().ToLowerInvariant();
+            if (normalized.StartsWith("spe")) return "speak";
+            if (normalized.StartsWith("id")) return "idle";
+            if (normalized.StartsWith("wal")) return "walk";
+            if (normalized.StartsWith("wa")) return "wave";
+            if (normalized.StartsWith("fl")) return "flee";
+
+            switch (normalized)
+            {
+                case "speak":
+                case "idle":
+                case "wave":
+                case "flee":
+                case "walk":
+                case "walk_to":
+                    return normalized == "walk_to"
+                        ? "walk"
+                        : normalized;
+                default:
+                    return "speak";
+            }
+        }
+
+        private string NormalizeEmotion(string emotion)
+        {
+            if (string.IsNullOrWhiteSpace(emotion))
+                return "neutral";
+
+            string normalized = emotion.Trim().ToLowerInvariant();
+            if (normalized.StartsWith("sca")) return "scared";
+            if (normalized.StartsWith("hap")) return "happy";
+            if (normalized.StartsWith("ang")) return "angry";
+            if (normalized.StartsWith("sa")) return "sad";
+            if (normalized.StartsWith("neu")) return "neutral";
+
+            switch (normalized)
+            {
+                case "happy":
+                case "angry":
+                case "sad":
+                case "scared":
+                case "neutral":
+                    return normalized;
+                default:
+                    return "neutral";
+            }
+        }
+
+        private AIResponse ParseModelText(string text,
+            bool keepSpecialTokens)
         {
             var result = new AIResponse
             {
@@ -587,57 +705,20 @@ namespace GTA5MOD2026
 
             if (string.IsNullOrWhiteSpace(text))
             {
-                result.dialogue = "...";
+                result.dialogue = keepSpecialTokens ? "[无响应]" : "...";
                 return result;
             }
 
-            text = StripNarration(text);
-            text = text.Trim();
+            text = StripThinkingTags(text);
+            text = StripNarration(text).Trim();
 
             string[] parts = text.Split('|');
-
             if (parts.Length >= 2)
             {
                 result.dialogue = parts[0].Trim();
-
-                string action = parts[1].Trim().ToLower();
-                if (action.StartsWith("spe")) action = "speak";
-                else if (action.StartsWith("id")) action = "idle";
-                else if (action.StartsWith("wa")) action = "wave";
-                else if (action.StartsWith("fl")) action = "flee";
-                else if (action.StartsWith("wal")) action = "walk";
-                switch (action)
-                {
-                    case "speak":
-                    case "idle":
-                    case "wave":
-                    case "flee":
-                    case "walk":
-                        result.action = action; break;
-                    default:
-                        result.action = "speak"; break;
-                }
-
+                result.action = NormalizeAction(parts[1]);
                 if (parts.Length >= 3)
-                {
-                    string emotion = parts[2].Trim().ToLower();
-                    if (emotion.StartsWith("hap")) emotion = "happy";
-                    else if (emotion.StartsWith("ang")) emotion = "angry";
-                    else if (emotion.StartsWith("sa")) emotion = "sad";
-                    else if (emotion.StartsWith("sca")) emotion = "scared";
-                    else if (emotion.StartsWith("neu")) emotion = "neutral";
-                    switch (emotion)
-                    {
-                        case "happy":
-                        case "angry":
-                        case "sad":
-                        case "scared":
-                        case "neutral":
-                            result.emotion = emotion; break;
-                        default:
-                            result.emotion = "neutral"; break;
-                    }
-                }
+                    result.emotion = NormalizeEmotion(parts[2]);
             }
             else
             {
@@ -648,35 +729,42 @@ namespace GTA5MOD2026
                 {
                     string jsonStr = text.Substring(
                         firstBrace, lastBrace - firstBrace + 1);
-
                     jsonStr = jsonStr
-                        .Replace(",\n}", "}").Replace(",}", "}");
+                        .Replace(",\n}", "}")
+                        .Replace(",\r\n}", "}")
+                        .Replace(", }", "}")
+                        .Replace(",}", "}");
 
-                    int openB = 0, closeB = 0;
+                    int openB = 0;
+                    int closeB = 0;
                     foreach (char c in jsonStr)
                     {
                         if (c == '{') openB++;
                         if (c == '}') closeB++;
                     }
+
                     jsonStr = jsonStr.TrimEnd();
                     if (jsonStr.EndsWith(","))
                         jsonStr = jsonStr.Substring(
                             0, jsonStr.Length - 1);
                     while (closeB < openB)
-                    { jsonStr += "}"; closeB++; }
+                    {
+                        jsonStr += "}";
+                        closeB++;
+                    }
 
                     try
                     {
                         var parsed = JObject.Parse(jsonStr);
-                        result.action =
+                        result.action = NormalizeAction(
                             (parsed["action"] ?? parsed["a"])
-                            ?.ToString()?.Trim() ?? "speak";
+                            ?.ToString());
                         result.dialogue =
                             (parsed["dialogue"] ?? parsed["d"])
                             ?.ToString()?.Trim() ?? "";
-                        result.emotion =
+                        result.emotion = NormalizeEmotion(
                             (parsed["emotion"] ?? parsed["e"])
-                            ?.ToString()?.Trim() ?? "neutral";
+                            ?.ToString());
                     }
                     catch
                     {
@@ -685,49 +773,32 @@ namespace GTA5MOD2026
                 }
                 else
                 {
-                    string plainText = text.Trim();
-                    int newlineIdx = plainText.IndexOfAny(
-                        new[] { '\n', '\r' });
-                    if (newlineIdx > 0)
-                        plainText = plainText.Substring(
-                            0, newlineIdx).Trim();
-
-                    int plainMaxLen = Config.Performance
-                        .MaxDialogueLength;
-                    if (plainText.Length > plainMaxLen)
-                    {
-                        int lastPunc = plainText.Substring(
-                            0, plainMaxLen).LastIndexOfAny(
-                            new[] { '，', '。', '！', '？', '…' });
-                        plainText = lastPunc > plainMaxLen / 2
-                            ? plainText.Substring(0, lastPunc + 1)
-                            : plainText.Substring(0, plainMaxLen);
-                    }
-
-                    result.dialogue = plainText;
+                    result.dialogue = ExtractDialogue(text);
                     result.action = "speak";
-                    result.emotion = "neutral";
+                    result.emotion = GuessEmotionFromText(result.dialogue);
                 }
             }
 
             int maxLen = Config.Performance.MaxDialogueLength;
             result.dialogue = ValidateAndTruncateDialogue(
-                result.dialogue, maxLen, false);
+                result.dialogue, maxLen, keepSpecialTokens);
+            result.action = NormalizeAction(result.action);
+            result.emotion = NormalizeEmotion(result.emotion);
 
             if (string.IsNullOrWhiteSpace(result.dialogue))
-                result.dialogue = "...";
+                result.dialogue = keepSpecialTokens ? "[无响应]" : "...";
 
             return result;
         }
 
+        private AIResponse ParsePipeFormat(string text)
+        {
+            return ParseModelText(text, false);
+        }
+
         private AIResponse ParseAIResponse(string body)
         {
-            var result = new AIResponse
-            {
-                action = "speak",
-                dialogue = "",
-                emotion = "neutral"
-            };
+            var result = ParseModelText(null, true);
 
             try
             {
@@ -766,18 +837,13 @@ namespace GTA5MOD2026
                     return result;
                 }
 
-                string contentField = message["content"]?.ToString();
                 string reasoningField = message["reasoning_content"]?.ToString();
 
-                // Try ALL possible content fields
-                // Different models/versions use different names
                 string text = null;
 
                 string[] fieldNames = new[]
                 {
                     "content",
-                    "reasoning_content",
-                    "reasoning",
                     "text",
                     "response"
                 };
@@ -793,14 +859,14 @@ namespace GTA5MOD2026
                     }
                 }
 
-                // Last resort: dump ALL message fields
                 if (string.IsNullOrWhiteSpace(text))
                 {
-                    // Try to get any string value from message
                     foreach (var prop in message.Children<JProperty>())
                     {
                         if (prop.Name == "role") continue;
                         if (prop.Name == "tool_calls") continue;
+                        if (prop.Name == "reasoning_content") continue;
+                        if (prop.Name == "reasoning") continue;
 
                         string val = prop.Value?.ToString();
                         if (!string.IsNullOrWhiteSpace(val)
@@ -817,130 +883,22 @@ namespace GTA5MOD2026
 
                 if (string.IsNullOrWhiteSpace(text))
                 {
+                    if (!string.IsNullOrWhiteSpace(reasoningField))
+                    {
+                        text = ChooseModelText(null, reasoningField);
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(text))
+                {
                     DebugLog($"All fields empty. " +
                         $"Message: {message}");
                     result.dialogue = "[无响应]";
                     return result;
                 }
 
-                if (string.IsNullOrWhiteSpace(text)
-                    || text == "..."
-                    || text.Trim().Length < 3)
-                {
-                    if (!string.IsNullOrWhiteSpace(reasoningField))
-                    {
-                        string fallback = StripThinkingTags(reasoningField);
-                        var lines = fallback.Split(
-                            new[] { '\n' },
-                            StringSplitOptions.RemoveEmptyEntries);
-                        string last = null;
-                        foreach (var line in lines)
-                        {
-                            var trimmed = line.Trim();
-                            if (trimmed.Contains("|")
-                                || trimmed.Length > 2)
-                                last = trimmed;
-                        }
-                        if (!string.IsNullOrWhiteSpace(last))
-                            fallback = last;
-                        text = fallback;
-                    }
-                }
-
-                // Strip thinking tags
-                text = StripThinkingTags(text);
-                text = StripNarration(text);
-
                 DebugLog($"Cleaned text: {text}");
-
-                // Extract JSON
-                int firstBrace = text.IndexOf('{');
-                int lastBrace = text.LastIndexOf('}');
-
-                if (firstBrace >= 0 && lastBrace > firstBrace)
-                {
-                    string jsonStr = text.Substring(
-                        firstBrace,
-                        lastBrace - firstBrace + 1);
-
-                    // Clean malformed JSON
-                    jsonStr = jsonStr
-                        .Replace(",\n}", "}")
-                        .Replace(",\r\n}", "}")
-                        .Replace(", }", "}")
-                        .Replace(",}", "}");
-
-                    // Fix truncated JSON — add missing closing brace
-                    int openBraces = 0;
-                    int closeBraces = 0;
-                    foreach (char c in jsonStr)
-                    {
-                        if (c == '{') openBraces++;
-                        if (c == '}') closeBraces++;
-                    }
-                    // Trim trailing whitespace/tabs first
-                    jsonStr = jsonStr.TrimEnd();
-                    // Remove trailing comma if exists
-                    if (jsonStr.EndsWith(","))
-                        jsonStr = jsonStr.Substring(0, jsonStr.Length - 1);
-                    while (closeBraces < openBraces)
-                    {
-                        jsonStr += "}";
-                        closeBraces++;
-                    }
-
-                    try
-                    {
-                        var parsed = JObject.Parse(jsonStr);
-
-                        result.action =
-                            (parsed["a"] ?? parsed["action"])
-                            ?.ToString()?.Trim() ?? "speak";
-                        result.dialogue =
-                            (parsed["d"] ?? parsed["dialogue"])
-                            ?.ToString()?.Trim() ?? "";
-                        result.emotion =
-                            (parsed["e"] ?? parsed["emotion"])
-                            ?.ToString()?.Trim() ?? "neutral";
-                    }
-                    catch
-                    {
-                        // JSON parse failed — use raw text
-                        DebugLog(
-                            $"JSON parse failed: {jsonStr}");
-                        result.dialogue = ExtractDialogue(text);
-                    }
-                }
-                else
-                {
-                    // No JSON braces — try to extract dialogue
-                    result.dialogue = ExtractDialogue(text);
-                    result.action = "speak";
-                }
-
-                // Validate action
-                switch (result.action)
-                {
-                    case "idle":
-                    case "wave":
-                    case "speak":
-                    case "flee":
-                    case "walk_to":
-                        break;
-                    default:
-                        result.action = "speak";
-                        break;
-                }
-
-                int maxLen = Config.Performance
-                    .MaxDialogueLength;
-                result.dialogue = ValidateAndTruncateDialogue(
-                    result.dialogue, maxLen, true);
-
-                if (string.IsNullOrWhiteSpace(result.dialogue))
-                {
-                    result.dialogue = "...";
-                }
+                result = ParseModelText(text, true);
 
                 DebugLog(
                     $"Final: action={result.action} " +
@@ -1250,6 +1208,41 @@ namespace GTA5MOD2026
 
             return null;
         }
+
+        /// <summary> 
+        /// 从纯中文对话猜测情绪，用于微调模型不输出pipe格式时 
+        /// </summary> 
+        private string GuessEmotionFromText(string text) 
+        { 
+            if (string.IsNullOrEmpty(text)) return "neutral"; 
+            
+            if (text.Contains("滚") || text.Contains("死") 
+                || text.Contains("杀") || text.Contains("弄") 
+                || text.Contains("打") || text.Contains("妈") 
+                || text.Contains("操") || text.Contains("混蛋") 
+                || text.Contains("废物") || text.Contains("垃圾")) 
+                return "angry"; 
+            
+            if (text.Contains("救命") || text.Contains("别") 
+                || text.Contains("怕") || text.Contains("求") 
+                || text.Contains("不要") || text.Contains("啊！") 
+                || text.Contains("跑")) 
+                return "scared"; 
+            
+            if (text.Contains("唉") || text.Contains("难过") 
+                || text.Contains("伤心") || text.Contains("可惜") 
+                || text.Contains("遗憾") || text.Contains("对不起")) 
+                return "sad"; 
+            
+            if (text.Contains("哈哈") || text.Contains("嘿") 
+                || text.Contains("太好") || text.Contains("棒") 
+                || text.Contains("开心") || text.Contains("好啊") 
+                || text.Contains("帅") || text.Contains("漂亮") 
+                || text.Contains("兄弟") || text.Contains("朋友")) 
+                return "happy"; 
+            
+            return "neutral"; 
+        } 
 
         private bool ContainsChinese(string text)
         {

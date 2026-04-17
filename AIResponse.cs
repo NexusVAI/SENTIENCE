@@ -23,5 +23,13 @@ namespace GTA5MOD2026
 
         /// <summary>这个回复属于哪个 NPC（Handle）</summary>
         public int NpcHandle { get; set; }
+
+        public string RequestId { get; set; }
+
+        public string StableId { get; set; }
+
+        public int HandleSnapshot { get; set; }
+
+        public int Generation { get; set; }
     }
 }

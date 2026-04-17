@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
@@ -43,19 +44,31 @@ namespace GTA5MOD2026
         private readonly ConcurrentDictionary<string, string>
             _npcVoices
                 = new ConcurrentDictionary<string, string>();
-        private volatile bool _isPlaying = false;
-
+        private readonly ConcurrentQueue<SpeechRequest> _speechQueue
+            = new ConcurrentQueue<SpeechRequest>();
+        private readonly ModConfig _config;
         private string _ttsServer;
 
         public VoiceManager()
         {
-            var config = ModConfig.Load();
-            _ttsServer = config.TTS.TTSServer;
+            _config = ModConfig.Load();
+            _ttsServer = _config.TTS.TTSServer;
 
             if (!Directory.Exists(AudioDir))
                 Directory.CreateDirectory(AudioDir);
             CleanOldAudio();
-            PreWarmEdgeTTS();
+            if (ShouldUseEdge())
+                PreWarmEdgeTTS();
+        }
+
+        private sealed class SpeechRequest
+        {
+            public int NpcHandle { get; set; }
+            public string Text { get; set; }
+            public string Voice { get; set; }
+            public string Emotion { get; set; }
+            public Action OnComplete { get; set; }
+            public Action<Exception> OnError { get; set; }
         }
 
         /// <summary>
@@ -112,38 +125,119 @@ namespace GTA5MOD2026
             Action onComplete = null,
             Action<Exception> onError = null)
         {
-            if (string.IsNullOrWhiteSpace(text)) return;
-            if (_isPlaying) return;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                _mainQueue.Enqueue(() => onComplete?.Invoke());
+                return;
+            }
+
+            if (!_config.TTS.VoiceEnabled
+                || string.Equals(
+                    _config.TTS.TTSProvider,
+                    "none",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _mainQueue.Enqueue(() => onComplete?.Invoke());
+                return;
+            }
+
+            _speechQueue.Enqueue(new SpeechRequest
+            {
+                NpcHandle = npcHandle,
+                Text = text,
+                Voice = voice,
+                Emotion = emotion,
+                OnComplete = onComplete,
+                OnError = onError
+            });
+
+            StartSpeechWorker();
+        }
+
+        private void StartSpeechWorker()
+        {
+            if (Interlocked.CompareExchange(ref _workerState, 1, 0) != 0)
+                return;
 
             Task.Run(async () =>
             {
-                _isPlaying = true;
                 try
                 {
-                    // Try TTS server first
-                    bool serverSuccess = await TryServerTTS(
-                        text, voice, emotion);
-
-                    if (!serverSuccess)
+                    while (_speechQueue.TryDequeue(out var request))
                     {
-                        // Fallback to edge-tts CLI
-                        await EdgeTTSFallback(
-                            npcHandle, text, voice, emotion);
+                        try
+                        {
+                            await SpeakInternalAsync(request)
+                                .ConfigureAwait(false);
+                            _mainQueue.Enqueue(() =>
+                                request.OnComplete?.Invoke());
+                        }
+                        catch (Exception ex)
+                        {
+                            _mainQueue.Enqueue(() =>
+                                request.OnError?.Invoke(ex));
+                        }
                     }
-
-                    _mainQueue.Enqueue(()
-                        => onComplete?.Invoke());
-                }
-                catch (Exception ex)
-                {
-                    _mainQueue.Enqueue(()
-                        => onError?.Invoke(ex));
                 }
                 finally
                 {
-                    _isPlaying = false;
+                    Interlocked.Exchange(ref _workerState, 0);
+                    if (!_speechQueue.IsEmpty)
+                        StartSpeechWorker();
                 }
             });
+        }
+
+        private int _workerState;
+
+        private async Task SpeakInternalAsync(SpeechRequest request)
+        {
+            string provider = (_config.TTS.TTSProvider ?? "edge")
+                .Trim()
+                .ToLowerInvariant();
+
+            if (provider == "server")
+            {
+                if (!await TryServerTTS(
+                    request.Text, request.Voice,
+                    request.Emotion).ConfigureAwait(false))
+                {
+                    throw new InvalidOperationException(
+                        "TTS server unavailable.");
+                }
+                return;
+            }
+
+            if (provider == "edge")
+            {
+                await EdgeTTSFallback(
+                    request.NpcHandle, request.Text,
+                    request.Voice, request.Emotion)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            bool serverSuccess = await TryServerTTS(
+                request.Text, request.Voice,
+                request.Emotion).ConfigureAwait(false);
+
+            if (!serverSuccess)
+            {
+                await EdgeTTSFallback(
+                    request.NpcHandle, request.Text,
+                    request.Voice, request.Emotion)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        private bool ShouldUseEdge()
+        {
+            string provider = (_config.TTS.TTSProvider ?? "edge")
+                .Trim()
+                .ToLowerInvariant();
+            return provider == "edge"
+                || provider == "auto"
+                || string.IsNullOrEmpty(provider);
         }
 
         private async Task<bool> TryServerTTS(string text,
@@ -151,6 +245,9 @@ namespace GTA5MOD2026
         {
             try
             {
+                if (string.IsNullOrWhiteSpace(_ttsServer))
+                    return false;
+
                 var requestBody = new
                 {
                     text = text,
@@ -193,31 +290,30 @@ namespace GTA5MOD2026
         private async Task EdgeTTSFallback(int npcHandle,
             string text, string voice, string emotion)
         {
-            await Task.Run(() =>
+            string error = await Task.Run(() =>
             {
-                // ===== FIXED: Much more natural SSML parameters =====
                 string rate, pitch;
                 switch (emotion)
                 {
                     case "angry":
-                        rate = "+10%";   // was +30% (too fast)
-                        pitch = "-3Hz";  // was -10Hz (too deep)
+                        rate = "+10%";
+                        pitch = "-3Hz";
                         break;
                     case "scared":
-                        rate = "+15%";   // was +50% (way too fast)
-                        pitch = "+5Hz";  // was +15Hz (squeaky)
+                        rate = "+15%";
+                        pitch = "+5Hz";
                         break;
                     case "happy":
-                        rate = "+5%";    // was +15%
-                        pitch = "+2Hz";  // was +5Hz
+                        rate = "+5%";
+                        pitch = "+2Hz";
                         break;
                     case "sad":
                         rate = "-10%";
                         pitch = "-2Hz";
                         break;
                     case "cold":
-                        rate = "-5%";    // was -20% (too slow)
-                        pitch = "-1Hz";  // was -5Hz
+                        rate = "-5%";
+                        pitch = "-1Hz";
                         break;
                     default:
                         rate = "+0%";
@@ -253,15 +349,31 @@ namespace GTA5MOD2026
                     {
                         proc.WaitForExit(8000);
                         if (!proc.HasExited)
+                        {
                             try { proc.Kill(); } catch { }
+                            return "edge-tts timeout.";
+                        }
+
+                        string stderr = proc.StandardError
+                            .ReadToEnd();
+                        if (proc.ExitCode != 0)
+                            return string.IsNullOrWhiteSpace(stderr)
+                                ? "edge-tts failed."
+                                : stderr.Trim();
                     }
                 }
 
                 if (File.Exists(filepath))
                 {
                     PlayAudioNAudio(filepath);
+                    return null;
                 }
-            });
+
+                return "edge-tts did not produce audio.";
+            }).ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(error))
+                throw new InvalidOperationException(error);
         }
 
         /// <summary>

@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Text;
 
@@ -26,14 +27,13 @@ namespace GTA5MOD2026
         {
             public string Provider { get; set; } = "local";
             public string LocalEndpoint { get; set; }
-                = "http://127.0.0.1:1234/v1/chat/completions";
-            // ===== CHANGED: default model =====
+                = "http://127.0.0.1:8080/v1/chat/completions";
             public string LocalModel { get; set; }
-                = "qwen2.5-3b-instruct";
+                = "gta5_2b_q4km";
             public string LightEndpoint { get; set; }
-                = "http://127.0.0.1:1234/v1/chat/completions";
+                = "http://127.0.0.1:8080/v1/chat/completions";
             public string LightModel { get; set; }
-                = "qwen3.5-0.8b";
+                = "gta5_2b_q4km";
             public string CloudEndpoint { get; set; }
                 = "https://api.deepseek.com/v1/chat/completions";
             public string CloudModel { get; set; }
@@ -129,47 +129,26 @@ namespace GTA5MOD2026
                             break;
                         case "PERFORMANCE":
                             if (key == "MaxTokens")
-                            {
-                                int.TryParse(value, out var mt);
                                 config.Performance.MaxTokens =
-                                    mt > 0 ? mt : 80;
-                            }
+                                    ParseInt(value, 80);
                             if (key == "MaxTokensThinking")
-                            {
-                                int.TryParse(value, out var mtt);
                                 config.Performance.MaxTokensThinking =
-                                    mtt > 0 ? mtt : 120;
-                            }
+                                    ParseInt(value, 120);
                             if (key == "Temperature")
-                            {
-                                double.TryParse(value,
-                                    out var t);
                                 config.Performance.Temperature =
-                                    t > 0 ? t : 0.7;
-                            }
+                                    ParseDouble(value, 0.7);
                             if (key == "MaxDialogueLength")
-                            {
-                                int.TryParse(value,
-                                    out var mdl);
                                 config.Performance
                                     .MaxDialogueLength =
-                                    mdl > 0 ? mdl : 45;
-                            }
+                                    ParseInt(value, 45);
                             if (key == "RequestCooldown")
-                            {
-                                float.TryParse(value,
-                                    out var rc);
                                 config.Performance
                                     .RequestCooldown =
-                                    rc > 0 ? rc : 2.0f;
-                            }
+                                    ParseFloat(value, 2.0f);
                             if (key == "StrictMode")
-                            {
-                                bool.TryParse(value,
-                                    out var sm);
                                 config.Performance.StrictMode
-                                    = sm;
-                            }
+                                    = ParseBool(value,
+                                        config.Performance.StrictMode);
                             break;
                         case "TTS":
                             if (key == "TTSProvider")
@@ -177,26 +156,18 @@ namespace GTA5MOD2026
                             else if (key == "TTSServer")
                                 config.TTS.TTSServer = value;
                             else if (key == "VoiceEnabled")
-                            {
-                                bool.TryParse(value,
-                                    out var ve);
-                                config.TTS.VoiceEnabled = ve;
-                            }
+                                config.TTS.VoiceEnabled =
+                                    ParseBool(value,
+                                        config.TTS.VoiceEnabled);
                             break;
                         case "AWAKENING":
                             if (key == "Enabled")
-                            {
-                                bool.TryParse(value,
-                                    out var ae);
-                                config.Awakening.Enabled = ae;
-                            }
+                                config.Awakening.Enabled =
+                                    ParseBool(value,
+                                        config.Awakening.Enabled);
                             else if (key == "Speed")
-                            {
-                                int.TryParse(value,
-                                    out var s);
                                 config.Awakening.Speed =
-                                    s > 0 ? s : 2;
-                            }
+                                    ParseInt(value, 2);
                             break;
                         case "STT":
                             if (key == "WhisperModelPath")
@@ -237,6 +208,13 @@ namespace GTA5MOD2026
                 sb.AppendLine("#   CloudEndpoint=your_api_url");
                 sb.AppendLine("#   CloudModel=model_name");
                 sb.AppendLine("#   CloudAPIKey=your_key");
+                sb.AppendLine("#");
+                sb.AppendLine("# Option D: KoboldCpp (lightweight, no CUDA needed)");
+                sb.AppendLine("#   Provider=local");
+                sb.AppendLine("#   LocalEndpoint=http://127.0.0.1:5001/v1/chat/completions");
+                sb.AppendLine("#   LocalModel=koboldcpp");
+                sb.AppendLine("#   LightEndpoint=http://127.0.0.1:5001/v1/chat/completions");
+                sb.AppendLine("#   LightModel=koboldcpp");
                 sb.AppendLine("# ==========================================");
                 sb.AppendLine();
 
@@ -244,7 +222,9 @@ namespace GTA5MOD2026
                 sb.AppendLine("# Provider: local or cloud");
                 sb.AppendLine($"Provider={config.LLM.Provider}");
                 sb.AppendLine();
-                sb.AppendLine("# --- Local (LM Studio) ---");
+                sb.AppendLine("# --- Local (LM Studio / KoboldCpp) ---");
+                sb.AppendLine("# LM Studio:  http://127.0.0.1:1234/v1/chat/completions");
+                sb.AppendLine("# KoboldCpp:  http://127.0.0.1:5001/v1/chat/completions");
                 sb.AppendLine($"LocalEndpoint={config.LLM.LocalEndpoint}");
                 sb.AppendLine("# Recommended models:");
                 sb.AppendLine("#   Weak GPU/CPU: qwen2.5-1.5b-instruct");
@@ -252,7 +232,8 @@ namespace GTA5MOD2026
                 sb.AppendLine("#   Strong GPU:   qwen2.5-7b-instruct");
                 sb.AppendLine($"LocalModel={config.LLM.LocalModel}");
                 sb.AppendLine();
-                sb.AppendLine("# Light model for NPC-NPC chat");
+                sb.AppendLine("# Light model endpoint");
+                sb.AppendLine("# KoboldCpp single model: set same as LocalEndpoint");
                 sb.AppendLine($"LightEndpoint={config.LLM.LightEndpoint}");
                 sb.AppendLine($"LightModel={config.LLM.LightModel}");
                 sb.AppendLine();
@@ -314,5 +295,79 @@ namespace GTA5MOD2026
             => Performance.MaxDialogueLength;
         public int MaxTokens => Performance.MaxTokens;
         public double Temperature => Performance.Temperature;
+
+        private static int ParseInt(string value, int fallback)
+        {
+            int parsed;
+            if (int.TryParse(value,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out parsed)
+                && parsed > 0)
+                return parsed;
+            return fallback;
+        }
+
+        private static float ParseFloat(string value, float fallback)
+        {
+            float parsed;
+            if (float.TryParse(value,
+                NumberStyles.Float | NumberStyles.AllowThousands,
+                CultureInfo.InvariantCulture, out parsed)
+                && parsed > 0f)
+                return parsed;
+
+            if (float.TryParse(
+                value?.Replace(',', '.'),
+                NumberStyles.Float | NumberStyles.AllowThousands,
+                CultureInfo.InvariantCulture, out parsed)
+                && parsed > 0f)
+                return parsed;
+
+            return fallback;
+        }
+
+        private static double ParseDouble(string value, double fallback)
+        {
+            double parsed;
+            if (double.TryParse(value,
+                NumberStyles.Float | NumberStyles.AllowThousands,
+                CultureInfo.InvariantCulture, out parsed)
+                && parsed > 0d)
+                return parsed;
+
+            if (double.TryParse(
+                value?.Replace(',', '.'),
+                NumberStyles.Float | NumberStyles.AllowThousands,
+                CultureInfo.InvariantCulture, out parsed)
+                && parsed > 0d)
+                return parsed;
+
+            return fallback;
+        }
+
+        private static bool ParseBool(string value, bool fallback)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return fallback;
+
+            string normalized = value.Trim().ToLowerInvariant();
+            if (normalized == "true"
+                || normalized == "1"
+                || normalized == "yes"
+                || normalized == "on")
+                return true;
+
+            if (normalized == "false"
+                || normalized == "0"
+                || normalized == "no"
+                || normalized == "off")
+                return false;
+
+            bool parsed;
+            if (bool.TryParse(value, out parsed))
+                return parsed;
+
+            return fallback;
+        }
     }
 }

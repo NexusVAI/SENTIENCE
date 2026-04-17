@@ -1,4 +1,4 @@
-using GTA;
+﻿using GTA;
 using GTA.Math;
 using GTA.Native;
 using System.Text;
@@ -36,9 +36,9 @@ namespace GTA5MOD2026
             = new Dictionary<int, NPCState>();
         private readonly Dictionary<string, NPCState> npcStateCache
             = new Dictionary<string, NPCState>();
-        private readonly ConcurrentDictionary<int, string>
-            _pendingPlayerInputs
-                = new ConcurrentDictionary<int, string>();
+        private readonly ConcurrentDictionary<string, PendingRequestContext>
+            _pendingRequests
+                = new ConcurrentDictionary<string, PendingRequestContext>();
 
         private bool voiceEnabled = true;
         private const float INTERACT_DISTANCE = 5f;
@@ -91,6 +91,16 @@ namespace GTA5MOD2026
             _npcChatSemaphore
                 = new System.Threading.SemaphoreSlim(1, 1);
 
+        private sealed class PendingRequestContext
+        {
+            public string RequestId { get; set; }
+            public int HandleSnapshot { get; set; }
+            public string StableId { get; set; }
+            public int Generation { get; set; }
+            public string PendingInput { get; set; }
+            public string RequestKind { get; set; }
+        }
+
         private static void ShowNotification(string text)
         {
             Function.Call(
@@ -124,6 +134,7 @@ namespace GTA5MOD2026
             memoryManager = new MemoryManager();
             voiceManager = new VoiceManager();
             speechManager = new SpeechManager();
+            voiceEnabled = aiManager.Config.TTS.VoiceEnabled;
             if (aiManager.Config.Awakening.Enabled)
             {
                 awakenSystem.SetSpeed(
@@ -153,8 +164,9 @@ namespace GTA5MOD2026
                     string payload = warmup.ToString(
                         Formatting.None);
 
-                    string endpoint = aiManager.Config.LLM
-                        .LocalEndpoint;
+                    string endpoint = aiManager
+                        .ResolveEndpointForModel(
+                            aiManager.ModelName);
 
                     await aiManager.PostRawAsync(endpoint,
                         payload, 10).ConfigureAwait(false);
@@ -163,13 +175,135 @@ namespace GTA5MOD2026
             });
 
             ShowNotification(
-                "~b~Nexus V: Sentience~w~ V4C Cogito\n" +
+                "~b~Nexus V: Sentience~w~ V4omni\n" +
                 "~g~G~w~=夸奖 ~r~H~w~=侮辱 ~b~T~w~=打字 ~y~J~w~=语音\n" +
                 "F8=语音开关 F6=状态 F9=保存记忆");
 
             Tick += OnTick;
             Interval = 0;
             KeyDown += OnKeyDown;
+        }
+
+        private string CreateRequestId()
+        {
+            return Guid.NewGuid().ToString("N");
+        }
+
+        private string RegisterPendingRequest(NPCState state,
+            string pendingInput, string requestKind)
+        {
+            string requestId = CreateRequestId();
+            _pendingRequests[requestId] =
+                new PendingRequestContext
+                {
+                    RequestId = requestId,
+                    HandleSnapshot = state.Handle,
+                    StableId = state.StableId,
+                    Generation = state.Generation,
+                    PendingInput = pendingInput,
+                    RequestKind = requestKind
+                };
+            return requestId;
+        }
+
+        private void RemovePendingRequest(string requestId)
+        {
+            if (string.IsNullOrWhiteSpace(requestId))
+                return;
+
+            _pendingRequests.TryRemove(requestId, out _);
+        }
+
+        private void ClearPendingRequestsForHandle(int handle)
+        {
+            foreach (var kvp in _pendingRequests.ToArray())
+            {
+                if (kvp.Value != null
+                    && kvp.Value.HandleSnapshot == handle)
+                {
+                    _pendingRequests.TryRemove(kvp.Key, out _);
+                }
+            }
+        }
+
+        private PendingRequestContext GetPendingRequest(string requestId)
+        {
+            if (string.IsNullOrWhiteSpace(requestId))
+                return null;
+
+            PendingRequestContext context;
+            if (_pendingRequests.TryGetValue(requestId, out context))
+                return context;
+
+            return null;
+        }
+
+        private bool TryResolveResponseState(AIResponse resp,
+            out NPCState state, out PendingRequestContext context)
+        {
+            state = null;
+            context = GetPendingRequest(resp.RequestId);
+            if (context == null)
+                return false;
+
+            if (!npcStates.TryGetValue(context.HandleSnapshot,
+                out state))
+                return false;
+
+            if (!state.IsValid())
+                return false;
+
+            return state.Handle == context.HandleSnapshot
+                && state.Generation == context.Generation
+                && string.Equals(state.StableId,
+                    context.StableId,
+                    StringComparison.Ordinal);
+        }
+
+        private void UpdateThreatLevel(NPCState state,
+            PerceptionData perception)
+        {
+            int threat = 0;
+            if (perception == null)
+            {
+                state.ThreatLevel = threat;
+                return;
+            }
+
+            if (perception.PlayerShooting
+                || perception.SawPedDie
+                || perception.NearbyExplosion
+                || state.SawPlayerKill)
+            {
+                threat = 5;
+            }
+            else if (perception.PlayerAiming
+                || state.SawPlayerShoot
+                || perception.HeardGunshots)
+            {
+                threat = 4;
+            }
+            else if ((perception.PlayerArmed
+                    && perception.PlayerDistance < 10f)
+                || perception.DangerLevel >= 50f
+                || state.KnowsPlayerIsDangerous)
+            {
+                threat = 3;
+            }
+            else if ((perception.PlayerInVehicle
+                    && perception.PlayerSpeed > 20f
+                    && perception.PlayerDistance < 15f)
+                || perception.DangerLevel >= 20f
+                || state.SawPlayerSpeeding)
+            {
+                threat = 2;
+            }
+            else if (perception.DangerLevel > 0f)
+            {
+                threat = 1;
+            }
+
+            state.ThreatLevel = threat;
         }
 
         private void OnTick(object sender, EventArgs e)
@@ -248,6 +382,7 @@ namespace GTA5MOD2026
             {
                 var perception = npcPerception.Perceive(
                     state, player, npcStates);
+                UpdateThreatLevel(state, perception);
 
                 float delta = gameTime - state.LastRequestTime;
                 state.Needs.Update(perception,
@@ -400,6 +535,7 @@ namespace GTA5MOD2026
                         {
                             Ped = nearest,
                             StableId = stableId,
+                            Generation = 1,
                             Personality = personality,
                             NpcName = name,
                             HomeZone = NPCPerception.GetZoneName(
@@ -411,6 +547,14 @@ namespace GTA5MOD2026
                     }
                     else
                     {
+                        if (activeState.Handle != nearest.Handle
+                            || activeState.Ped != nearest
+                            || !string.Equals(
+                                activeState.StableId, stableId,
+                                StringComparison.Ordinal))
+                        {
+                            activeState.Generation++;
+                        }
                         activeState.Ped = nearest;
                         activeState.StableId = stableId;
                         if (string.IsNullOrEmpty(
@@ -464,7 +608,7 @@ namespace GTA5MOD2026
                         = removedState;
                 }
                 memoryManager.UnbindHandle(h);
-                _pendingPlayerInputs.TryRemove(h, out _);
+                ClearPendingRequestsForHandle(h);
                 npcStates.Remove(h);
             }
         }
@@ -673,14 +817,21 @@ namespace GTA5MOD2026
 
             string payload = payloadObj.ToString(Formatting.None);
             int npcHandle = state.Handle;
+            string requestId = RegisterPendingRequest(
+                state, null, "autonomy");
 
-            // Use light endpoint (which is actually same as local but model name differs)
             aiManager.RequestForNpcAsync(
                 npcHandle, payload,
                 resp =>
                 {
-                    if (!npcStates.TryGetValue(npcHandle, out var s))
+                    PendingRequestContext pendingContext;
+                    NPCState s;
+                    if (!TryResolveResponseState(resp, out s,
+                        out pendingContext))
+                    {
+                        RemovePendingRequest(requestId);
                         return;
+                    }
 
                     string action = resp.action ?? "idle";
                     string dialogue = resp.dialogue ?? "";
@@ -732,6 +883,7 @@ namespace GTA5MOD2026
 
                     s.WaitingForAI = false;
                     s.CurrentAction = action;
+                    RemovePendingRequest(requestId);
                 },
                 ex =>
                 {
@@ -739,7 +891,11 @@ namespace GTA5MOD2026
                     {
                         s.WaitingForAI = false;
                     }
-                }
+                    RemovePendingRequest(requestId);
+                },
+                requestId,
+                state.StableId,
+                state.Generation
             );
         }
 
@@ -755,7 +911,8 @@ namespace GTA5MOD2026
             }
             else if (targetState.WaitingForAI)
             {
-                menuText = "NPC思考中...";
+                float elapsed = Game.GameTime / 1000f - targetState.LastRequestTime;
+                menuText = $"NPC思考中...{elapsed:F0}秒";
             }
             else if (dist < INTERACT_DISTANCE)
             {
@@ -955,6 +1112,7 @@ namespace GTA5MOD2026
 
             // COMPLEX INPUT → needs LLM
             state.WaitingForAI = true;
+            state.LastRequestTime = Game.GameTime / 1000f;
             string systemPrompt;
             string userPrompt;
             var historyTurns = state.ConversationHistory
@@ -1121,7 +1279,8 @@ namespace GTA5MOD2026
                 Formatting.None);
 
             int npcHandle = state.Ped.Handle;
-            _pendingPlayerInputs[npcHandle] = playerText;
+            string requestId = RegisterPendingRequest(
+                state, playerText, "player");
 
             if (aiManager.Config.LLM.Provider == "local")
             {
@@ -1143,10 +1302,12 @@ namespace GTA5MOD2026
                             s.WaitingForAI = false;
                             s.IsInteracting = false;
                         }
-                        _pendingPlayerInputs.TryRemove(
-                            npcHandle, out _);
+                        RemovePendingRequest(requestId);
                         ShowNotification("AI Error: " + ex.Message);
-                    }
+                    },
+                    requestId,
+                    state.StableId,
+                    state.Generation
                 );
             }
             else
@@ -1158,10 +1319,12 @@ namespace GTA5MOD2026
                     {
                         state.WaitingForAI = false;
                         state.IsInteracting = false;
-                        _pendingPlayerInputs.TryRemove(
-                            npcHandle, out _);
+                        RemovePendingRequest(requestId);
                         ShowNotification("AI Error: " + ex.Message);
-                    }
+                    },
+                    requestId,
+                    state.StableId,
+                    state.Generation
                 );
             }
         }
@@ -1169,12 +1332,38 @@ namespace GTA5MOD2026
         public void RequestNPCChat(NPCState speaker,
             NPCState listener)
         {
-            if (speaker.WaitingForAI) return;
+            if (speaker.WaitingForAI || listener.WaitingForAI)
+                return;
+            if (!_npcChatSemaphore.Wait(0))
+                return;
+
+            speaker.IsInteracting = true;
+            listener.IsInteracting = true;
+            speaker.WaitingForAI = true;
+            listener.WaitingForAI = true;
+
+            int speakerHandle = speaker.Handle;
+            string speakerStableId = speaker.StableId;
+            int speakerGeneration = speaker.Generation;
+            Vector3 speakerPosition = speaker.Ped.Position;
+            string speakerPersonality = speaker.Personality;
+
+            bool knowsPlayerIsDangerous =
+                speaker.KnowsPlayerIsDangerous;
+            bool sawPlayerKill = speaker.SawPlayerKill;
+            bool sawPlayerShoot = speaker.SawPlayerShoot;
+            bool sawPlayerSpeeding = speaker.SawPlayerSpeeding;
+
+            string zone = NPCPerception.GetZoneName(
+                speakerPosition);
+            var zoneEvent = NPCPerception.GetZoneEvent(zone);
+
+            string requestId = RegisterPendingRequest(
+                speaker, null, "npc_chat");
 
             Task.Run(async () =>
             {
-                if (!await _npcChatSemaphore.WaitAsync(0))
-                    return;
+                bool queuedResponse = false;
                 try
                 {
                     var config = aiManager.Config;
@@ -1182,7 +1371,7 @@ namespace GTA5MOD2026
                     string model = config.LLM.LightModel;
 
                     string personalityDesc;
-                    switch (speaker.Personality)
+                    switch (speakerPersonality)
                     {
                         case "友善":
                             personalityDesc = "热情友好的"; break;
@@ -1201,19 +1390,16 @@ namespace GTA5MOD2026
                     string prompt =
                         $"你是一个{personalityDesc}人。";
 
-                    if (speaker.KnowsPlayerIsDangerous)
+                    if (knowsPlayerIsDangerous)
                     {
-                        if (speaker.SawPlayerKill)
+                        if (sawPlayerKill)
                             prompt += "你刚才看到有人被杀了！";
-                        else if (speaker.SawPlayerShoot)
+                        else if (sawPlayerShoot)
                             prompt += "你听到附近有枪声！";
-                        else if (speaker.SawPlayerSpeeding)
+                        else if (sawPlayerSpeeding)
                             prompt += "刚才有辆车差点撞到你！";
                     }
 
-                    string zone = NPCPerception.GetZoneName(
-                        speaker.Ped.Position);
-                    var zoneEvent = NPCPerception.GetZoneEvent(zone);
                     if (zoneEvent != null && zoneEvent.Type >= EventType.Shooting)
                     {
                         prompt += "这附近最近不太安全。";
@@ -1267,10 +1453,15 @@ namespace GTA5MOD2026
                             action = "speak",
                             dialogue = text,
                             emotion = "neutral",
-                            NpcHandle = speaker.Handle
+                            NpcHandle = speakerHandle,
+                            RequestId = requestId,
+                            StableId = speakerStableId,
+                            HandleSnapshot = speakerHandle,
+                            Generation = speakerGeneration
                         });
+                        queuedResponse = true;
 
-                        if (speaker.KnowsPlayerIsDangerous
+                        if (knowsPlayerIsDangerous
                             && !listener
                                 .KnowsPlayerIsDangerous)
                         {
@@ -1278,25 +1469,32 @@ namespace GTA5MOD2026
                                 = true;
                             listener.PlayerReputation -= 15f;
 
-                            if (speaker.SawPlayerKill)
+                            if (sawPlayerKill)
                             {
                                 listener.SawPlayerKill = true;
                                 listener.PlayerReputation
                                     -= 20f;
                             }
 
+                            if (sawPlayerShoot)
+                                listener.SawPlayerShoot = true;
+
+                            if (sawPlayerSpeeding)
+                                listener.SawPlayerSpeeding = true;
+
                             listener.PlayerReputation
                                 = Math.Max(-100f,
                                     listener.PlayerReputation);
                         }
-
-                        speaker.IsInteracting = false;
-                        listener.IsInteracting = false;
                     }
                 }
                 catch { }
                 finally
                 {
+                    if (!queuedResponse)
+                        RemovePendingRequest(requestId);
+                    speaker.WaitingForAI = false;
+                    listener.WaitingForAI = false;
                     speaker.IsInteracting = false;
                     listener.IsInteracting = false;
                     _npcChatSemaphore.Release();
@@ -1346,27 +1544,22 @@ namespace GTA5MOD2026
 
             while (responseQueue.TryDequeue(out var resp))
             {
-                if (!npcStates.TryGetValue(resp.NpcHandle,
-                    out var state))
+                PendingRequestContext pendingContext;
+                NPCState state;
+                if (!TryResolveResponseState(resp, out state,
+                    out pendingContext))
                 {
-                    _pendingPlayerInputs.TryRemove(
-                        resp.NpcHandle, out _);
-                    continue;
-                }
-                if (!state.IsValid())
-                {
-                    _pendingPlayerInputs.TryRemove(
-                        resp.NpcHandle, out _);
+                    RemovePendingRequest(resp.RequestId);
                     continue;
                 }
 
-                string pendingInput;
-                if (_pendingPlayerInputs.TryRemove(
-                    resp.NpcHandle, out pendingInput)
-                    && !string.IsNullOrWhiteSpace(pendingInput))
+                if (!string.IsNullOrWhiteSpace(
+                    pendingContext.PendingInput))
                 {
                     state.RecordConversationTurn(
-                        "user", pendingInput, gameTime);
+                        "user",
+                        pendingContext.PendingInput,
+                        gameTime);
                 }
 
                 string action = resp.action ?? "speak";
@@ -1530,6 +1723,7 @@ namespace GTA5MOD2026
                 state.IsInteracting = false;
                 state.InteractionCount++;
                 state.LastRequestTime = gameTime;
+                RemovePendingRequest(resp.RequestId);
             }
         }
 
@@ -1565,6 +1759,7 @@ namespace GTA5MOD2026
                 $"{state.NpcName}[{pTag}]", "");
 
             if (voiceEnabled
+                && aiManager.Config.TTS.VoiceEnabled
                 && !string.IsNullOrEmpty(dialogue)
                 && !state.IsPlayingVoice)
             {
