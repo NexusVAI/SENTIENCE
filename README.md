@@ -8,7 +8,7 @@
       ║   ███████║███████╗██║ ╚████║   ██║       ║
       ║   ╚══════╝╚══════╝╚═╝  ╚═══╝   ╚═╝       ║
       ║                                          ║
-      ║        SENTIENCE v4Cogito Installer      ║
+      ║     SENTIENCE v4 OmniBata Installer      ║
       ║                                          ║
       ╚══════════════════════════════════════════╝
 
@@ -37,188 +37,243 @@
 [Configuration](#-configuration) •
 [Architecture](#-architecture)
 
-#  sentience V4Cogito
+# 🧠 SENTIENCE: AI NPCs for GTA V
 
-一个面向 GTA 5 的 C# 模组项目，聚焦 **NPC AI 行为系统 + 语音交互链路**，适合用于 AI 驱动 NPC 的玩法实验与模组开发学习。
+<div align="center">
 
-## 功能特性
+# ⚡ NEXUS V: SENTIENCE Omni
 
-- NPC 行为系统：包含感知、状态、目标与决策相关模块
-- 语音交互能力：支持本地 TTS 服务与游戏内语音播放
-- 可配置模型链路：支持本地模型与云端模型的配置切换
-- 模块化代码结构：便于二次开发与功能扩展
+### *What happens when NPCs start questioning their existence?*
 
+[![GTA5](https://img.shields.io/badge/GTA5-Enhanced-green?style=for-the-badge&logo=rockstargames&logoColor=white)]()
+[![AI-Sentient](https://img.shields.io/badge/AI-Local%20LLM-red?style=for-the-badge&logo=openai&logoColor=white)]()
+[![License](https://img.shields.io/badge/License-MIT-purple?style=for-the-badge)]()
 
-## 环境要求
+**Solo developer. $30 GPU. NPCs that wake up.**
 
-| 组件 | 说明 |
-|---|---|
-| GTA 5（增强版，传承版） | 已安装并可正常运行 |
-| ScriptHookV | GTA 模组基础依赖 |
-| ScriptHookVDotNet3 | C# 脚本运行依赖（游戏目录） |
-| .NET Framework | 4.8（项目目标框架 net48） |
-| Visual Studio | 2022+（推荐 2026） |
-| Python | 3.9+（用于语音服务） |
+*Built on hardware people throw away.*
+*Doing what AAA studios haven't.*
 
-## 快速开始
-
-### 1) 克隆仓库
-
-```bash
-git clone https://github.com/NexusVAI/SENTIENCE
-
-```
-
-### 2) 安装 Python 依赖（语音可选功能）
-
-```bash
-pip install edge-tts
-```
-
-### 3) 编译项目
-
-```bash
-dotnet build GTA5MOD2026/GTA5MOD2026.csproj -c Release
-```
-
-### 4) 部署 DLL 到游戏目录
-
-将生成文件复制到 GTA 5 的 `scripts` 目录（目录不存在请手动创建）：
-
-```text
-GTA5MOD2026/bin/Release/net48/GTA5MOD2026.dll
-```
-
-### 5) 启动语音服务（如需语音）
-
-在 `GTA5MOD2026/` 子目录中运行：
-（注意，已经有.exe应用程序可以可视化操作了，脚本只做备用）
-```bash
-python voice_server.py
-```
-
-或双击运行：
-
-```text
-GTA5MOD2026/start_voice_server.bat
-```
-
-## 配置说明
-
-首次运行会在以下路径生成配置文件：
-
-```text
-%USERPROFILE%/Documents/GTA5MOD2026/config.ini
-```
-
-主要配置分组：
-
-- `[LLM]`：模型提供方、接口地址、模型名、云端密钥
-- `[PERFORMANCE]`：Token 上限、温度、对话长度、请求冷却
-- `[TTS]`：TTS 提供方、TTS 服务地址、语音开关
-- `[STT]`：本地 Whisper 模型路径
-- `[AWAKENING]`：唤醒系统开关与速度
-
-示例（请使用你自己的配置值）：
-
-```ini
-[LLM]
-Provider=local
-LocalEndpoint=http://127.0.0.1:1234/v1/chat/completions
-LocalModel=qwen2.5-3b-instruct
-CloudEndpoint=https://api.deepseek.com/v1/chat/completions
-CloudModel=deepseek-chat
-CloudAPIKey=YOUR_API_KEY
-
-[TTS]
-TTSProvider=edge
-TTSServer=http://127.0.0.1:5111
-VoiceEnabled=true
-```
-
-## 使用说明
-
-- 确保 ScriptHookV 与 ScriptHookVDotNet3 已正确安装到 GTA 5 目录
-- 确保模组 DLL 位于 `scripts` 目录
-- 若启用语音，先启动 `voice_server.py`，再进入游戏
-- 在游戏中通过项目逻辑触发 NPC 对话与行为流程
-
-## 项目结构
-
-```text
-GTA5MOD2026/
-├─ GTA5MOD2026.slnx
-├─ README.md
-├─ GitHub开源仓库使用教程.md
-├─ GTA5MOD2026/
-│  ├─ GTA5MOD2026.csproj
-│  ├─ NPCManager.cs
-│  ├─ AIManager.cs
-│  ├─ NPCBrain.cs
-│  ├─ NPCGoalManager.cs
-│  ├─ NPCPerception.cs
-│  ├─ NPCState.cs
-│  ├─ SpeechManager.cs
-│  ├─ VoiceManager.cs
-│  ├─ MemoryManager.cs
-│  ├─ ModConfig.cs
-│  ├─ voice_server.py
-│  └─ start_voice_server.bat
-└─ packages/
-```
-
-## 常见问题（FAQ）
-
-### 1. 编译时报找不到 `ScriptHookVDotNet3.dll`
-
-当前项目通过本地 `HintPath` 引用该 DLL。请在 `GTA5MOD2026.csproj` 中将 `HintPath` 改为你本机 GTA 5 目录下的实际路径。
-
-### 2. 进游戏后脚本未加载
-
-- 检查 DLL 是否在 GTA 5 的 `scripts` 目录
-- 检查 ScriptHookV / ScriptHookVDotNet3 是否版本匹配
-- 排查是否与其他脚本冲突
-
-### 3. 语音没有声音
-
-- 确认 `voice_server.py` 正在运行
-- 确认 `config.ini` 中 `TTSServer` 与服务端口一致（默认 `5111`）
-- 确认本地 Python 已安装 `edge-tts`
-
-## Roadmap
-
-- 优化 NPC 决策稳定性与行为多样性
-- 完善语音识别与多角色音色策略
-- 增加可观测性与调试面板
-- 补充自动化测试与示例场景
-
-## 贡献指南
-
-欢迎通过 Issue 和 Pull Request 参与贡献：
-
-1. Fork 本仓库
-2. 创建特性分支（`feature/xxx`）
-3. 提交修改并附带说明
-4. 发起 Pull Request
-
-建议保持单一主题提交，便于审查与回滚。
-
-## 许可证
-
-当前仓库尚未添加顶层开源许可证文件。建议在开源发布前补充 `LICENSE`（常见选项：MIT / Apache-2.0 / GPL-3.0）。
-
-## 致谢
-
-- ScriptHookVDotNet 社区生态
-- GTA 5 Modding 社区与文档维护者
+</div>
 
 ---
 
-仅供学习与研究用途，请遵守所在地法律法规与游戏相关条款。
+## ✨ 新版本特性 (v4 Omni)
 
+### 🖥️ AI Launcher - 一键启动的 AI 服务端
+
+- **内置 llama.cpp 推理服务器**：无需额外配置，接管即用
+- **可视化界面**：点击启动，自动管理模型和服务器
+- **多模型支持**：本地模型（CPU/GPU）或云端 API（DeepSeek/OpenAI）
+- **智能路径处理**：自动检测模型位置，跨平台分发无忧
+
+### 🎮 GTA5 Mod - 游戏内的 AI NPC
+
+- **NPC 觉醒系统**：NPC 拥有自主意识和行为决策
+- **实时语音交互**：TTS 语音合成 + STT 语音识别
+- **行为记忆系统**：NPC 记住与玩家的交互历史
+- **感知引擎**：NPC 能感知周围环境和玩家行为
+
+---
+
+## 🏗️ 系统架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      AI NPCS Launcher                        │
+│  ┌─────────────┐  ┌──────────────┐  ┌───────────────────┐  │
+│  │ GUI 控制面板 │  │ LlamaServer  │  │   Config 管理器    │  │
+│  └─────────────┘  └──────────────┘  └───────────────────┘  │
+│         │                 │                    │            │
+│         └───────────────┬─┴────────────────────┘            │
+│                         │                                   │
+│              ┌──────────▼──────────┐                        │
+│              │  OpenAI Compatible │                        │
+│              │   HTTP API :8080   │                        │
+│              └──────────┬──────────┘                        │
+└─────────────────────────┼───────────────────────────────────┘
+                          │
+              ┌───────────▼───────────┐
+              │    GTA5 Mod (C#)     │
+              │  ┌─────────────────┐  │
+              │  │ NPC Brain/State │  │
+              │  │ Voice Manager   │  │
+              │  │ Memory System  │  │
+              │  └─────────────────┘  │
+              └───────────────────────┘
+```
+
+**两种运行模式：**
+
+| 模式 | 配置 | 优点 |
+|------|------|------|
+| **本地模型** | 使用内置 llama.cpp | 离线可用，零 API 成本 |
+| **云端 API** | DeepSeek/OpenAI | 更强模型，更低延迟 |
+
+---
+
+## 📦 快速安装
+
+###方式一：一键安装器（推荐）
+
+1. 下载 `OmniO_v4.1_Setup.exe`
+2. 运行安装程序，选择安装路径
+3. 启动 **AI NPCS.exe**
+4. 点击「启动推理服务器」
+5. 进入 GTA5 游戏
+
+###方式二：手动部署
+
+#### 1) 克隆仓库
+
+```bash
+git clone https://github.com/NexusVAI/SENTIENCE.git
+```
+
+#### 2) 部署 GTA5 Mod
+
+```bash
+# 编译 Mod
+cd SENTIENCE
+dotnet build GTA5MOD2026/GTA5MOD2026.csproj -c Release
+
+# 复制到 GTA5 scripts 目录
+copy GTA5MOD2026\bin\Release\net48\GTA5MOD2026.dll "C:\Program Files\Rockstar Games\GTA V\scripts\"
+```
+
+#### 3) 部署 AI Launcher
+
+```bash
+# 编译 Launcher
+dotnet build AI NPCS/AI NPCS.csproj -c Release -o publish
+
+# 或直接使用 publish 目录中的 AI_NPCS.exe
+```
+
+---
+
+## ⚙️ 配置说明
+
+首次运行会在以下路径生成配置文件：
+
+```
+%USERPROFILE%\Documents\GTA5MOD2026\config.ini
+```
+
+### 主要配置项
+
+```ini
+[LLM]
+# 使用本地模型（内置 llama.cpp）
+Provider=local
+LocalEndpoint=http://127.0.0.1:8080/v1/chat/completions
+
+# 或使用云端 API
+# Provider=cloud
+# CloudEndpoint=https://api.deepseek.com/v1/chat/completions
+# CloudModel=deepseek-chat
+# CloudAPIKey=your_api_key
+
+[Performance]
+MaxTokens=80
+Temperature=0.7
+MaxDialogueLength=45
+
+[TTS]
+TTSProvider=edge
+VoiceEnabled=true
+
+[Awakening]
+Enabled=true
+Speed=2
+```
+
+---
+
+## 🔧 项目结构
+
+```
+SENTIENCE/
+├── GTA5MOD2026/                # GTA5 Mod 源码
+│   ├── GTA5MOD2026.csproj
+│   ├── NPCManager.cs           # NPC 管理器
+│   ├── NPCBrain.cs             # NPC 思维逻辑
+│   ├── VoiceManager.cs         # 语音管理
+│   ├── MemoryManager.cs        # 记忆系统
+│   └── ...
+│
+└── README.md
+```
+
+---
+
+## 💡 使用指南
+
+### 启动流程
+
+1. 运行 `AI_NPCS.exe`
+2. 点击「🧠 启动推理服务器」
+3. 等待日志显示「推理服务器就绪」
+4. 启动 GTA5 游戏
+5. 开始与 NPC 对话！
+
+### 游戏内操作
+
+- NPC 会自动与玩家进行语音对话
+- NPC 具有记忆功能，记得之前的交互
+- 可通过配置调整 NPC 的「觉醒速度」
+
+---
+
+## 🐛 常见问题
+
+### 1. 推理服务器启动失败
+
+- 检查 `启动项` 目录下是否有 `gta5_2b_q4km.gguf` 模型文件
+- 检查端口 8080 是否被占用：`netstat -ano | findstr 8080`
+
+### 2. Mod 未加载
+
+- 确认 ScriptHookV 和 ScriptHookVDotNet3 已安装
+- 确认 `GTA5MOD2026.dll` 在 GTA5 的 `scripts` 目录
+
+### 3. 语音无声音
+
+- 确认 `voice_server.py` 正在运行（或使用 Launcher 的内置 TTS）
+- 检查 `config.ini` 中 `VoiceEnabled=true`
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] 多 NPC 同时对话支持
+- [ ] NPC 性格自定义系统
+- [ ] 对话记录导出与分析
+- [ ] 移动端远程控制面板
+- [ ] 更多 TTS 语音包
+
+---
+
+## 📄 许可证
+
+MIT License - 可自由使用、修改和分发
+
+---
+
+## 🙏 致谢
+
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) - 高效本地推理
+- [ScriptHookVDotNet3](https://github.com/scripthookvdotnet/scripthookvdotnet) - GTA5 Mod 开发框架
+- [Qwen](https://github.com/QwenLM) - 本地模型支持
+
+---
+
+<div align="center">
 
 **NEXUS V: SENTIENCE**
 
-Made with 🧠 and a GT 730
-官网: https://nexusvai.github.io/NexusV/
+*Made with 🧠 and a GT 730*
+
+[官网](https://nexusvai.github.io/NexusV/) | [GitHub](https://github.com/NexusVAI/SENTIENCE)
+
 </div>
