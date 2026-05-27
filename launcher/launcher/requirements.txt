@@ -1,0 +1,2 @@
+flet[all]==0.85.1
+pyinstaller==6.10.0
