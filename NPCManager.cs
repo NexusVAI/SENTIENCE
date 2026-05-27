@@ -42,7 +42,16 @@ namespace GTA5MOD2026
 
         private bool voiceEnabled = true;
         private const float INTERACT_DISTANCE = 5f;
+        // Fallback used only on the very first frame before config loads.
         private const float MENU_SHOW_DISTANCE = 8f;
+
+        // F5 LemonUI configuration menu.
+        private SentienceMenu _menu;
+        // Player death tracking so we can refresh state after respawn.
+        private bool _playerWasDead;
+        // Buffered HUD line drawn every frame from the custom drawer.
+        private string _hudText;
+        private string _lastHudText;
 
         private float lastRequestTime = 0f;
         private float RequestCooldown
@@ -175,9 +184,21 @@ namespace GTA5MOD2026
             });
 
             ShowNotification(
-                "~b~Nexus V: Sentience~w~ V4omni\n" +
+                "~b~Nexus V: Sentience~w~ V5 Anima\n" +
                 "~g~G~w~=夸奖 ~r~H~w~=侮辱 ~b~T~w~=打字 ~y~J~w~=语音\n" +
-                "F8=语音开关 F6=状态 F9=保存记忆");
+                "F5=菜单 F8=语音开关 F6=状态 F9=保存记忆");
+
+            // F5 LemonUI menu — hands over all UI/behavior knobs to the player.
+            try
+            {
+                _menu = new SentienceMenu(aiManager.Config,
+                    () => ModConfig.Save(aiManager.Config));
+            }
+            catch (Exception ex)
+            {
+                _menu = null;
+                ShowNotification("~r~LemonUI 菜单列表失败: " + ex.Message);
+            }
 
             Tick += OnTick;
             Interval = 0;
@@ -308,6 +329,15 @@ namespace GTA5MOD2026
 
         private void OnTick(object sender, EventArgs e)
         {
+            // Always reset and (re)render the custom HUD this frame.
+            _hudText = null;
+
+            // Drive the LemonUI menu every frame so it can fade/scroll.
+            if (_menu != null)
+            {
+                try { _menu.Process(); } catch { }
+            }
+
             aiManager.ProcessMainQueue();
             voiceManager.ProcessMainQueue();
             speechManager.ProcessMainQueue();
@@ -323,14 +353,38 @@ namespace GTA5MOD2026
             var player = Game.Player.Character;
             if (player == null || !player.Exists()) return;
 
-            FindNearestNPC(player);
+            // ── Death / respawn handling.  The vanilla DISPLAY_HELP queue
+            //    gets jammed by the hospital script after a death, so we
+            //    drop our targets and let the custom HUD redraw clean on
+            //    the next live frame.
+            bool playerDead = player.IsDead
+                || Function.Call<bool>(
+                    Hash.IS_PLAYER_BEING_ARRESTED,
+                    Game.Player.Handle, true);
+            if (playerDead)
+            {
+                _playerWasDead = true;
+                targetNpc = null;
+                targetState = null;
+                return;
+            }
+            if (_playerWasDead)
+            {
+                _playerWasDead = false;
+                // Wipe any lingering GTA help text from the death sequence.
+                Function.Call(Hash.CLEAR_HELP, true);
+                Function.Call(Hash.CLEAR_PRINTS);
+            }
+
+            float radius = aiManager.Config.Behavior.ResponseRadius;
+            FindNearestNPC(player, radius);
 
             if (targetNpc != null && targetState != null)
             {
                 float dist = Vector3.Distance(
                     player.Position, targetNpc.Position);
 
-                if (dist < MENU_SHOW_DISTANCE)
+                if (dist < radius)
                     DrawInteractionMenu(dist);
                 AutoReact(targetState, player, dist, gameTime);
             }
@@ -374,7 +428,25 @@ namespace GTA5MOD2026
                     state.CurrentGoal = "冷静下来";
                 }
 
-            float brainInterval = state.IsAutonomous ? 8f : 12f;
+            // Activity 0..100 -> brainInterval multiplier.
+            //   0   -> never auto-tick (player must press G/H/T/J)
+            //   50  -> default pacing
+            //   100 -> ~3x faster
+            int activity = aiManager.Config.Behavior.ActivityLevel;
+            if (activity <= 0)
+                continue; // skip autonomous brain tick entirely
+            float intervalMul = activity >= 100
+                ? 0.33f
+                : (1.5f - (activity / 100f));
+            float brainInterval =
+                (state.IsAutonomous ? 8f : 12f) * intervalMul;
+            if (!aiManager.Config.Behavior.AutonomousTalk
+                && !state.IsInteracting)
+            {
+                // No autonomous talk allowed: skip everything except
+                // active player interactions.
+                continue;
+            }
 
             if (!state.WaitingForAI
                 && !state.IsInteracting
@@ -468,11 +540,18 @@ namespace GTA5MOD2026
 
         private void FindNearestNPC(Ped player)
         {
+            FindNearestNPC(player,
+                aiManager?.Config?.Behavior?.ResponseRadius
+                    ?? MENU_SHOW_DISTANCE);
+        }
+
+        private void FindNearestNPC(Ped player, float radius)
+        {
             Ped nearest = null;
-            float nearestDist = MENU_SHOW_DISTANCE;
+            float nearestDist = radius;
 
             Ped[] nearbyPeds = World.GetNearbyPeds(
-                player, MENU_SHOW_DISTANCE);
+                player, radius);
 
             foreach (var ped in nearbyPeds)
             {
@@ -902,6 +981,7 @@ namespace GTA5MOD2026
         private void DrawInteractionMenu(float dist)
         {
             if (targetState == null) return;
+            if (!aiManager.Config.UI.HudEnabled) return;
 
             string menuText;
 
@@ -924,16 +1004,96 @@ namespace GTA5MOD2026
                     + (int)targetState.PlayerReputation) / 2;
 
                 menuText =
-                    $"{name} 好感度:{displayRep}\n" +
-                    $"~g~G~w~夸奖  ~r~H~w~侮辱\n" +
-                    $"~b~T~w~打字  ~y~J~w~语音";
+                    $"{name}  好感:{displayRep}\n" +
+                    "G 夸奖   H 侮辱\n" +
+                    "T 打字   J 语音";
             }
             else
             {
                 menuText = $"靠近 {targetState.NpcName}";
             }
 
-            ShowHelpText(menuText);
+            // Stash for the late-frame HUD draw so we can bypass GTA's
+            // help-text queue that gets jammed after death/hospital.
+            _hudText = menuText;
+            DrawSentienceHud(menuText);
+        }
+
+        private void DrawSentienceHud(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            var ui = aiManager.Config.UI;
+            if (!ui.HudEnabled) return;
+
+            float scale = Math.Max(0.4f, Math.Min(3f, ui.HudScale));
+            int fgR, fgG, fgB;
+            SentienceMenu.ParseColor(ui.HudColor,
+                out fgR, out fgG, out fgB);
+            int bgR, bgG, bgB;
+            SentienceMenu.ParseColor(ui.HudBgColor,
+                out bgR, out bgG, out bgB);
+            int bgA = Math.Max(0, Math.Min(255, ui.HudBgAlpha));
+
+            string pos = ui.HudPosition ?? "top_left";
+            bool right = pos.EndsWith("right");
+            bool bottom = pos.StartsWith("bottom");
+
+            string[] lines = text.Split('\n');
+            int n = lines.Length;
+            float fontScale = 0.38f * scale;
+            float lineH = 0.026f * scale;
+            float boxW = 0.21f * scale;
+            float padX = 0.008f * scale;
+            float padY = 0.006f * scale;
+            float boxH = padY * 2f + lineH * n;
+
+            float anchorX = right ? (1f - 0.012f) : 0.012f;
+            float anchorY = bottom
+                ? (1f - 0.08f - boxH) : 0.012f;
+            float rectCx = right
+                ? (anchorX - boxW * 0.5f)
+                : (anchorX + boxW * 0.5f);
+            float rectCy = anchorY + boxH * 0.5f;
+
+            if (bgA > 0)
+            {
+                Function.Call(Hash.DRAW_RECT,
+                    rectCx, rectCy, boxW, boxH,
+                    bgR, bgG, bgB, bgA);
+            }
+
+            for (int i = 0; i < n; i++)
+            {
+                Function.Call(Hash.SET_TEXT_FONT, 0);
+                Function.Call(Hash.SET_TEXT_SCALE, 0f, fontScale);
+                Function.Call(Hash.SET_TEXT_COLOUR,
+                    fgR, fgG, fgB, 255);
+                Function.Call(Hash.SET_TEXT_OUTLINE);
+                if (right)
+                {
+                    Function.Call(Hash.SET_TEXT_RIGHT_JUSTIFY, true);
+                    Function.Call(Hash.SET_TEXT_WRAP,
+                        anchorX - boxW + padX, anchorX - padX);
+                }
+                Function.Call(
+                    Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
+                Function.Call(
+                    Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME,
+                    lines[i]);
+                float ty = anchorY + padY + i * lineH;
+                float tx = right ? anchorX : (anchorX + padX);
+                Function.Call(
+                    Hash.END_TEXT_COMMAND_DISPLAY_TEXT, tx, ty);
+            }
+
+            // Optional beep (only when the text string changed).
+            if (ui.HudBeep && text != _lastHudText)
+            {
+                Function.Call(Hash.PLAY_SOUND_FRONTEND, -1,
+                    "NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET",
+                    0);
+            }
+            _lastHudText = text;
         }
 
         private void HandleCompliment()
@@ -1119,7 +1279,7 @@ namespace GTA5MOD2026
                 .Skip(Math.Max(0,
                     state.ConversationHistory.Count - 6))
                 .ToList();
-            if (aiManager.Config.LLM.Provider == "cloud")
+            if (aiManager.IsCloudProvider())
             {
                 string genderHint = state.IsMale
                     ? "You are male." : "You are female.";
@@ -1214,14 +1374,17 @@ namespace GTA5MOD2026
                     "2. 不要描述动作（禁止用*号或括号描述行为）\n" +
                     "3. 不要写心理活动，不要解释，不要分析\n" +
                     "4. 直接说话，像真人对话一样\n\n" +
-                    "动作选一个：speak idle wave flee\n" +
-                    "情绪选一个：happy angry sad scared neutral\n\n" +
+                    "动作选一个：speak idle wave walk flee attack aim cower point nod shake_head follow call_cops salute dance drink\n" +
+                    "情绪选一个：neutral happy angry sad fear surprise disgust\n\n" +
                     "正确示范：\n" +
-                    "你好啊！|speak|happy\n" +
-                    "滚远点！|speak|angry\n" +
-                    "你别过来...|speak|scared\n" +
-                    "哈哈笑死我了|wave|happy\n" +
-                    "救命啊！|flee|scared\n\n" +
+                    "你好啊！|wave|happy\n" +
+                    "滚远点！|aim|angry\n" +
+                    "你别过来...|cower|fear\n" +
+                    "哈哈笑死我了|dance|happy\n" +
+                    "救命啊！警察！|call_cops|fear\n" +
+                    "行，走吧。|nod|neutral\n" +
+                    "不行。|shake_head|disgust\n" +
+                    "卧槽什么情况？！|point|surprise\n\n" +
                     "错误示范（绝对不要这样）：\n" +
                     "*后退一步* 你好\n" +
                     "（微笑着说）你好\n" +
@@ -1282,7 +1445,7 @@ namespace GTA5MOD2026
             string requestId = RegisterPendingRequest(
                 state, playerText, "player");
 
-            if (aiManager.Config.LLM.Provider == "local")
+            if (aiManager.IsLocalProvider())
             {
                 aiManager.StreamForNpcAsync(
                     npcHandle, payload,
@@ -1696,28 +1859,10 @@ namespace GTA5MOD2026
                     gameTime
                 );
 
-                ShowNPCResponse(state, dialogue);
+                ShowNPCResponse(state, dialogue, emotion);
 
                 state.Ped.Task.ClearAll();
-                switch (action)
-                {
-                    case "flee":
-                        state.Ped.Task.FleeFrom(
-                            Game.Player.Character);
-                        break;
-                    case "wave":
-                        RequestAnim(state.Ped, state,
-                            "anim@mp_player_intcelebrationmale@wave",
-                            "wave");
-                        break;
-                    case "speak":
-                    case "idle":
-                    default:
-                        state.Ped.Task.TurnTo(
-                            Game.Player.Character);
-                        state.Ped.Task.StandStill(8000);
-                        break;
-                }
+                ExecuteLLMAction(state, action);
 
                 state.WaitingForAI = false;
                 state.IsInteracting = false;
@@ -1728,7 +1873,7 @@ namespace GTA5MOD2026
         }
 
         private void ShowNPCResponse(NPCState state,
-            string dialogue)
+            string dialogue, string aiEmotion = null)
         {
             float gameTime = Game.GameTime / 1000f;
             state.LastLLMDialogue = dialogue;
@@ -1747,16 +1892,39 @@ namespace GTA5MOD2026
                 default: pTag = "NPC"; break;
             }
 
-            Function.Call(
-                Hash.BEGIN_TEXT_COMMAND_THEFEED_POST,
-                "STRING");
-            Function.Call(
-                Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME,
-                dialogue);
-            Function.Call(
-                Hash.END_TEXT_COMMAND_THEFEED_POST_MESSAGETEXT,
-                "CHAR_DEFAULT", "CHAR_DEFAULT", false, 0,
-                $"{state.NpcName}[{pTag}]", "");
+            // Resolve display mode (notification / subtitle / both).
+            string mode = (aiManager.Config.UI.ResponseDisplayMode
+                ?? "notification").ToLowerInvariant();
+            bool wantToast = mode == "notification" || mode == "both";
+            bool wantSubtitle = mode == "subtitle" || mode == "both";
+
+            if (wantToast)
+            {
+                Function.Call(
+                    Hash.BEGIN_TEXT_COMMAND_THEFEED_POST,
+                    "STRING");
+                Function.Call(
+                    Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME,
+                    dialogue);
+                Function.Call(
+                    Hash.END_TEXT_COMMAND_THEFEED_POST_MESSAGETEXT,
+                    "CHAR_DEFAULT", "CHAR_DEFAULT", false, 0,
+                    $"{state.NpcName}[{pTag}]", "");
+            }
+
+            if (wantSubtitle)
+            {
+                int durMs = (int)Math.Round(Math.Max(1f,
+                    aiManager.Config.UI.SubtitleDuration) * 1000f);
+                string subtitleLine = $"{state.NpcName}: {dialogue}";
+                Function.Call(
+                    Hash.BEGIN_TEXT_COMMAND_PRINT, "STRING");
+                Function.Call(
+                    Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME,
+                    subtitleLine);
+                Function.Call(
+                    Hash.END_TEXT_COMMAND_PRINT, durMs, true);
+            }
 
             if (voiceEnabled
                 && aiManager.Config.TTS.VoiceEnabled
@@ -1766,14 +1934,21 @@ namespace GTA5MOD2026
                 string voice = voiceManager.GetVoiceForNpc(
                     state.StableId, state.IsMale);
 
-                string emotion = "neutral";
-                switch (state.Personality)
+                // Prefer the AI-derived emotion; fall back to personality.
+                string emotion = !string.IsNullOrWhiteSpace(aiEmotion)
+                    ? aiEmotion
+                    : null;
+                if (string.IsNullOrEmpty(emotion))
                 {
-                    case "暴躁": emotion = "angry"; break;
-                    case "胆小": emotion = "scared"; break;
-                    case "友善": emotion = "happy"; break;
-                    case "搞笑": emotion = "happy"; break;
-                    case "冷漠": emotion = "cold"; break;
+                    switch (state.Personality)
+                    {
+                        case "暴躁": emotion = "angry"; break;
+                        case "胆小": emotion = "scared"; break;
+                        case "友善": emotion = "happy"; break;
+                        case "搞笑": emotion = "happy"; break;
+                        case "冷漠": emotion = "cold"; break;
+                        default: emotion = "neutral"; break;
+                    }
                 }
 
                 state.IsPlayingVoice = true;
@@ -1786,9 +1961,139 @@ namespace GTA5MOD2026
             }
         }
 
+        // ─────────────────────────────────────────────────────────────
+        //  LLM action dispatch table.  Keep the action set in sync with
+        //  AIManager.NormalizeAction.
+        // ─────────────────────────────────────────────────────────────
+        private void ExecuteLLMAction(NPCState state, string action)
+        {
+            var ped = state.Ped;
+            if (ped == null || !ped.Exists()) return;
+
+            var player = Game.Player.Character;
+
+            // ── Behavior gates ───────────────────────────────────────
+            var bcfg = aiManager.Config.Behavior;
+            if (!bcfg.ActionsEnabled)
+            {
+                // Master kill switch: degrade everything to "speak".
+                action = "speak";
+            }
+            else
+            {
+                if (action == "attack" && !bcfg.AllowAttack)
+                    action = "aim";        // de-escalate
+                if (action == "aim" && !bcfg.AllowAim)
+                    action = "point";      // softer
+                if (action == "call_cops" && !bcfg.AllowCallCops)
+                    action = "shake_head"; // express disapproval
+            }
+
+            switch (action)
+            {
+                case "flee":
+                    ped.Task.FleeFrom(player);
+                    break;
+
+                case "walk":
+                    ped.Task.Wander();
+                    break;
+
+                case "attack":
+                    Function.Call(Hash.TASK_COMBAT_PED,
+                        ped.Handle, player.Handle, 0, 16);
+                    break;
+
+                case "aim":
+                    // Aim at the player without firing.  Lasts ~5s.
+                    Function.Call(Hash.TASK_AIM_GUN_AT_ENTITY,
+                        ped.Handle, player.Handle, 5000, false);
+                    break;
+
+                case "cower":
+                    // Native cower task (used by GTA's default panic AI).
+                    Function.Call(Hash.TASK_COWER,
+                        ped.Handle, 6000);
+                    break;
+
+                case "point":
+                    ped.Task.TurnTo(player);
+                    RequestAnim(ped, state,
+                        "anim@mp_player_intcelebrationmale@finger_point",
+                        "finger_point");
+                    break;
+
+                case "nod":
+                    ped.Task.TurnTo(player);
+                    RequestAnim(ped, state,
+                        "gestures@m@standing@casual",
+                        "gesture_nod_yes_soft");
+                    break;
+
+                case "shake_head":
+                    ped.Task.TurnTo(player);
+                    RequestAnim(ped, state,
+                        "gestures@m@standing@casual",
+                        "gesture_no_way");
+                    break;
+
+                case "follow":
+                    ped.Task.FollowToOffsetFromEntity(
+                        player, new GTA.Math.Vector3(2f, -2f, 0f),
+                        1f, -1, 3f, true);
+                    break;
+
+                case "call_cops":
+                    // Make the NPC pull out the phone and "call".
+                    // TASK_USE_MOBILE_PHONE_TIMED auto-handles prop attach.
+                    Function.Call(
+                        Hash.TASK_USE_MOBILE_PHONE_TIMED,
+                        ped.Handle, 6000);
+                    ShowNotification(
+                        $"~y~{state.NpcName} 拿出手机报警了！");
+                    break;
+
+                case "salute":
+                    ped.Task.TurnTo(player);
+                    RequestAnim(ped, state,
+                        "anim@mp_player_intcelebrationmale@salute",
+                        "salute");
+                    break;
+
+                case "dance":
+                    RequestAnim(ped, state,
+                        "anim@mp_player_intcelebrationmale@dance_facedj",
+                        "dance_facedj");
+                    break;
+
+                case "drink":
+                    RequestAnim(ped, state,
+                        "amb@world_human_drinking@beer@male@base",
+                        "base");
+                    break;
+
+                case "wave":
+                    ped.Task.TurnTo(player);
+                    RequestAnim(ped, state,
+                        "anim@mp_player_intcelebrationmale@wave",
+                        "wave");
+                    break;
+
+                case "speak":
+                case "idle":
+                default:
+                    ped.Task.TurnTo(player);
+                    ped.Task.StandStill(8000);
+                    break;
+            }
+        }
+
         private void DrawNPCText(NPCState state)
         {
             if (!state.IsValid()) return;
+
+            var ui = aiManager.Config.UI;
+            if (!ui.OverheadEnabled) return;
 
             var ped = state.Ped;
             float dist = Vector3.Distance(
@@ -1843,15 +2148,39 @@ namespace GTA5MOD2026
                     break;
             }
 
-            string status =
-                $"{state.NpcName} [{pTag}]{awakenIcon}";
+            // Style → tag + width tweaks.
+            string style = (ui.OverheadStyle ?? "default")
+                .ToLowerInvariant();
+            string nameTag;
+            switch (style)
+            {
+                case "minimal":   nameTag = state.NpcName; break;
+                case "bold":      nameTag = $"[{state.NpcName}]"; break;
+                case "cinematic": nameTag = $"— {state.NpcName} —"; break;
+                default:          nameTag = $"{state.NpcName} [{pTag}]"; break;
+            }
+
+            string status = nameTag + awakenIcon;
             if (state.WaitingForAI)
                 status += " ...";
             else if (state.IsPlayingVoice)
                 status += " >>>";
 
+            // User color override.
+            if (!ui.UsePersonalityColor)
+            {
+                int ur, ug, ub;
+                SentienceMenu.ParseColor(ui.OverheadColor,
+                    out ur, out ug, out ub);
+                r = ur; g = ug; b = ub;
+            }
+
+            float userScale = Math.Max(0.3f,
+                Math.Min(3f, ui.OverheadScale));
+            float baseScale = (style == "bold" || style == "cinematic")
+                ? 0.50f : 0.40f;
             float scale = Math.Max(
-                0.25f, 0.4f - (dist / 40f));
+                0.20f, (baseScale - (dist / 40f)) * userScale);
             DrawText3D(headPos, status, r, g, b, scale);
 
             if (state.AwakenLevel > 0 && dist < 8f)
@@ -1875,7 +2204,8 @@ namespace GTA5MOD2026
             }
 
             float gameTime = Game.GameTime / 1000f;
-            if (state.HasActiveDialogue(gameTime) && dist < 12f)
+            if (ui.ShowFloatingDialogue
+                && state.HasActiveDialogue(gameTime) && dist < 12f)
             {
                 string dialogueText = state.LastLLMDialogue ?? "";
 
@@ -2106,6 +2436,15 @@ namespace GTA5MOD2026
         private void OnKeyDown(object sender,
             System.Windows.Forms.KeyEventArgs e)
         {
+            // Forward every key to the LemonUI menu (handles open/close
+            // toggle on the configured hotkey as well as nav while open).
+            if (_menu != null)
+            {
+                try { _menu.HandleKey(e.KeyCode); } catch { }
+                // While the menu is showing, swallow gameplay hotkeys so
+                // the player isn't sending compliments by accident.
+                if (_menu.IsVisible) return;
+            }
             switch (e.KeyCode)
             {
                 case System.Windows.Forms.Keys.G:

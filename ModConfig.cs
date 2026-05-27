@@ -22,22 +22,26 @@ namespace GTA5MOD2026
             = new STTConfig();
         public AwakeningConfig Awakening { get; set; }
             = new AwakeningConfig();
+        public UIConfig UI { get; set; }
+            = new UIConfig();
+        public BehaviorConfig Behavior { get; set; }
+            = new BehaviorConfig();
 
         public class LLMConfig
         {
             public string Provider { get; set; } = "local";
             public string LocalEndpoint { get; set; }
-                = "http://127.0.0.1:8080/v1/chat/completions";
+                = "http://127.0.0.1:5001/v1/chat/completions";
             public string LocalModel { get; set; }
                 = "gta5_2b_q4km";
             public string LightEndpoint { get; set; }
-                = "http://127.0.0.1:8080/v1/chat/completions";
+                = "http://127.0.0.1:5001/v1/chat/completions";
             public string LightModel { get; set; }
                 = "gta5_2b_q4km";
             public string CloudEndpoint { get; set; }
                 = "https://api.deepseek.com/v1/chat/completions";
             public string CloudModel { get; set; }
-                = "deepseek-chat";
+                = "deepseek-v4-flash";
             public string CloudAPIKey { get; set; } = "";
         }
 
@@ -69,6 +73,64 @@ namespace GTA5MOD2026
         {
             public bool Enabled { get; set; } = true;
             public int Speed { get; set; } = 2;
+        }
+
+        // ─────────────────────────────────────────────────────────
+        //  HUD / drawing customization (exposed through the F5 menu)
+        // ─────────────────────────────────────────────────────────
+        public class UIConfig
+        {
+            // NPC overhead label
+            public bool OverheadEnabled { get; set; } = true;
+            // 0.5 = small, 1.0 = default, 2.0 = huge
+            public float OverheadScale { get; set; } = 1.0f;
+            // "default" | "minimal" | "bold" | "cinematic"
+            public string OverheadStyle { get; set; } = "default";
+            // When false, every NPC label uses OverheadColor instead of
+            // the personality color.
+            public bool UsePersonalityColor { get; set; } = true;
+            // ARGB hex without alpha, e.g. "FFFFFF".
+            public string OverheadColor { get; set; } = "FFFFFF";
+            // Show the per-NPC dialogue bubble above their head.
+            public bool ShowFloatingDialogue { get; set; } = true;
+
+            // Bottom-of-screen subtitle (the "剧情字幕" mode).
+            // "notification" (top-left, default) | "subtitle" (bottom)
+            // | "both"
+            public string ResponseDisplayMode { get; set; } = "notification";
+            // Subtitle seconds.
+            public float SubtitleDuration { get; set; } = 6f;
+
+            // Top-left interaction HUD (replaces GTA's HELP queue).
+            public bool HudEnabled { get; set; } = true;
+            public float HudScale { get; set; } = 1.0f;
+            public string HudColor { get; set; } = "FFFFFF";
+            public string HudBgColor { get; set; } = "000000";
+            public int HudBgAlpha { get; set; } = 140;
+            // "top_left" | "top_right" | "bottom_left" | "bottom_right"
+            public string HudPosition { get; set; } = "top_left";
+            // Beep when help text appears (GTA default behavior).
+            public bool HudBeep { get; set; } = false;
+        }
+
+        // ─────────────────────────────────────────────────────────
+        //  Runtime gameplay behavior knobs
+        // ─────────────────────────────────────────────────────────
+        public class BehaviorConfig
+        {
+            // Meters – how close the player must be for the menu to show.
+            public float ResponseRadius { get; set; } = 8f;
+            // 0 (only manual) → 100 (very chatty).  50 keeps prior pacing.
+            public int ActivityLevel { get; set; } = 50;
+            // Master switch for executing LLM-suggested actions.
+            // When false the NPC will only speak / face the player.
+            public bool ActionsEnabled { get; set; } = true;
+            // Disable specific high-impact actions even when ActionsEnabled.
+            public bool AllowAttack { get; set; } = true;
+            public bool AllowAim { get; set; } = true;
+            public bool AllowCallCops { get; set; } = true;
+            // Allow NPC to initiate conversation without player input.
+            public bool AutonomousTalk { get; set; } = true;
         }
 
         public static ModConfig Load()
@@ -173,6 +235,70 @@ namespace GTA5MOD2026
                             if (key == "WhisperModelPath")
                                 config.STT.WhisperModelPath = value;
                             break;
+                        case "UI":
+                            if (key == "OverheadEnabled")
+                                config.UI.OverheadEnabled = ParseBool(value,
+                                    config.UI.OverheadEnabled);
+                            else if (key == "OverheadScale")
+                                config.UI.OverheadScale = ParseFloat(value,
+                                    config.UI.OverheadScale);
+                            else if (key == "OverheadStyle")
+                                config.UI.OverheadStyle = value;
+                            else if (key == "UsePersonalityColor")
+                                config.UI.UsePersonalityColor = ParseBool(value,
+                                    config.UI.UsePersonalityColor);
+                            else if (key == "OverheadColor")
+                                config.UI.OverheadColor = value;
+                            else if (key == "ShowFloatingDialogue")
+                                config.UI.ShowFloatingDialogue = ParseBool(value,
+                                    config.UI.ShowFloatingDialogue);
+                            else if (key == "ResponseDisplayMode")
+                                config.UI.ResponseDisplayMode = value;
+                            else if (key == "SubtitleDuration")
+                                config.UI.SubtitleDuration = ParseFloat(value,
+                                    config.UI.SubtitleDuration);
+                            else if (key == "HudEnabled")
+                                config.UI.HudEnabled = ParseBool(value,
+                                    config.UI.HudEnabled);
+                            else if (key == "HudScale")
+                                config.UI.HudScale = ParseFloat(value,
+                                    config.UI.HudScale);
+                            else if (key == "HudColor")
+                                config.UI.HudColor = value;
+                            else if (key == "HudBgColor")
+                                config.UI.HudBgColor = value;
+                            else if (key == "HudBgAlpha")
+                                config.UI.HudBgAlpha = ParseInt(value,
+                                    config.UI.HudBgAlpha);
+                            else if (key == "HudPosition")
+                                config.UI.HudPosition = value;
+                            else if (key == "HudBeep")
+                                config.UI.HudBeep = ParseBool(value,
+                                    config.UI.HudBeep);
+                            break;
+                        case "BEHAVIOR":
+                            if (key == "ResponseRadius")
+                                config.Behavior.ResponseRadius = ParseFloat(value,
+                                    config.Behavior.ResponseRadius);
+                            else if (key == "ActivityLevel")
+                                config.Behavior.ActivityLevel = ParseInt(value,
+                                    config.Behavior.ActivityLevel);
+                            else if (key == "ActionsEnabled")
+                                config.Behavior.ActionsEnabled = ParseBool(value,
+                                    config.Behavior.ActionsEnabled);
+                            else if (key == "AllowAttack")
+                                config.Behavior.AllowAttack = ParseBool(value,
+                                    config.Behavior.AllowAttack);
+                            else if (key == "AllowAim")
+                                config.Behavior.AllowAim = ParseBool(value,
+                                    config.Behavior.AllowAim);
+                            else if (key == "AllowCallCops")
+                                config.Behavior.AllowCallCops = ParseBool(value,
+                                    config.Behavior.AllowCallCops);
+                            else if (key == "AutonomousTalk")
+                                config.Behavior.AutonomousTalk = ParseBool(value,
+                                    config.Behavior.AutonomousTalk);
+                            break;
                     }
                 }
             }
@@ -195,26 +321,22 @@ namespace GTA5MOD2026
                 sb.AppendLine("# ==========================================");
                 sb.AppendLine("#");
                 sb.AppendLine("# QUICK SETUP:");
-                sb.AppendLine("# Option A: Local model (free, needs LM Studio)");
+                sb.AppendLine("# Option A: Local llama.cpp CPU model");
                 sb.AppendLine("#   Provider=local");
-                sb.AppendLine("#   Download LM Studio + any model");
+                sb.AppendLine("#   LocalEndpoint=http://127.0.0.1:5001/v1/chat/completions");
                 sb.AppendLine("#");
                 sb.AppendLine("# Option B: Cloud API (fast, costs money)");
                 sb.AppendLine("#   Provider=cloud");
-                sb.AppendLine("#   Get API key from DeepSeek/OpenAI");
+                sb.AppendLine("#   Get API key from DeepSeek/OpenAI/Aliyun/etc.");
                 sb.AppendLine("#");
                 sb.AppendLine("# Option C: Any OpenAI-compatible API");
                 sb.AppendLine("#   Provider=cloud");
                 sb.AppendLine("#   CloudEndpoint=your_api_url");
                 sb.AppendLine("#   CloudModel=model_name");
                 sb.AppendLine("#   CloudAPIKey=your_key");
-                sb.AppendLine("#");
-                sb.AppendLine("# Option D: KoboldCpp (lightweight, no CUDA needed)");
-                sb.AppendLine("#   Provider=local");
-                sb.AppendLine("#   LocalEndpoint=http://127.0.0.1:5001/v1/chat/completions");
-                sb.AppendLine("#   LocalModel=koboldcpp");
-                sb.AppendLine("#   LightEndpoint=http://127.0.0.1:5001/v1/chat/completions");
-                sb.AppendLine("#   LightModel=koboldcpp");
+                sb.AppendLine("#   CloudAPIKey=Bearer your_key");
+                sb.AppendLine("#   CloudAPIKey=Authorization: Bearer your_key");
+                sb.AppendLine("#   CloudAPIKey=x-api-key: your_key");
                 sb.AppendLine("# ==========================================");
                 sb.AppendLine();
 
@@ -222,28 +344,30 @@ namespace GTA5MOD2026
                 sb.AppendLine("# Provider: local or cloud");
                 sb.AppendLine($"Provider={config.LLM.Provider}");
                 sb.AppendLine();
-                sb.AppendLine("# --- Local (LM Studio / KoboldCpp) ---");
-                sb.AppendLine("# LM Studio:  http://127.0.0.1:1234/v1/chat/completions");
-                sb.AppendLine("# KoboldCpp:  http://127.0.0.1:5001/v1/chat/completions");
+                sb.AppendLine("# --- Local (llama.cpp / OpenAI-compatible) ---");
+                sb.AppendLine("# llama.cpp: http://127.0.0.1:5001/v1/chat/completions");
+                sb.AppendLine("# LM Studio: http://127.0.0.1:1234/v1/chat/completions");
                 sb.AppendLine($"LocalEndpoint={config.LLM.LocalEndpoint}");
-                sb.AppendLine("# Recommended models:");
-                sb.AppendLine("#   Weak GPU/CPU: qwen2.5-1.5b-instruct");
-                sb.AppendLine("#   Mid GPU/CPU:  qwen3.5-4b");
-                sb.AppendLine("#   Strong GPU:   qwen2.5-7b-instruct");
+                sb.AppendLine("# Model should match llama-server --alias");
                 sb.AppendLine($"LocalModel={config.LLM.LocalModel}");
                 sb.AppendLine();
                 sb.AppendLine("# Light model endpoint");
-                sb.AppendLine("# KoboldCpp single model: set same as LocalEndpoint");
+                sb.AppendLine("# Single local model: set same as LocalEndpoint");
                 sb.AppendLine($"LightEndpoint={config.LLM.LightEndpoint}");
                 sb.AppendLine($"LightModel={config.LLM.LightModel}");
                 sb.AppendLine();
                 sb.AppendLine("# --- Cloud API ---");
                 sb.AppendLine("# DeepSeek: https://api.deepseek.com/v1/chat/completions");
                 sb.AppendLine("# OpenAI:   https://api.openai.com/v1/chat/completions");
+                sb.AppendLine("# Aliyun:   https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
                 sb.AppendLine("# SiliconFlow: https://api.siliconflow.cn/v1/chat/completions");
                 sb.AppendLine($"CloudEndpoint={config.LLM.CloudEndpoint}");
-                sb.AppendLine("# DeepSeek: deepseek-chat");
+                sb.AppendLine("# DeepSeek: deepseek-v4-flash");
+                sb.AppendLine("# DeepSeek: deepseek-v4-pro");
+                sb.AppendLine("# DeepSeek (deprecated 2026/07/24): deepseek-chat");
+                sb.AppendLine("# DeepSeek (deprecated 2026/07/24): deepseek-reasoner");
                 sb.AppendLine("# OpenAI:   gpt-4o-mini");
+                sb.AppendLine("# Aliyun:   qwen-plus");
                 sb.AppendLine($"CloudModel={config.LLM.CloudModel}");
                 sb.AppendLine("# Get your API key from the provider website");
                 sb.AppendLine($"CloudAPIKey={config.LLM.CloudAPIKey}");
@@ -283,6 +407,49 @@ namespace GTA5MOD2026
                 sb.AppendLine($"Enabled={config.Awakening.Enabled}");
                 sb.AppendLine("# 1=slow 2=normal 5=fast 10=very fast");
                 sb.AppendLine($"Speed={config.Awakening.Speed}");
+                sb.AppendLine();
+
+                sb.AppendLine("[UI]");
+                sb.AppendLine("# Overhead floating label");
+                sb.AppendLine($"OverheadEnabled={config.UI.OverheadEnabled}");
+                sb.AppendLine("# 0.5=small 1.0=default 2.0=huge");
+                sb.AppendLine($"OverheadScale={config.UI.OverheadScale}");
+                sb.AppendLine("# default | minimal | bold | cinematic");
+                sb.AppendLine($"OverheadStyle={config.UI.OverheadStyle}");
+                sb.AppendLine($"UsePersonalityColor={config.UI.UsePersonalityColor}");
+                sb.AppendLine("# Hex RGB without # (e.g. FFFFFF)");
+                sb.AppendLine($"OverheadColor={config.UI.OverheadColor}");
+                sb.AppendLine($"ShowFloatingDialogue={config.UI.ShowFloatingDialogue}");
+                sb.AppendLine();
+                sb.AppendLine("# Response display");
+                sb.AppendLine("# notification | subtitle | both");
+                sb.AppendLine($"ResponseDisplayMode={config.UI.ResponseDisplayMode}");
+                sb.AppendLine($"SubtitleDuration={config.UI.SubtitleDuration}");
+                sb.AppendLine();
+                sb.AppendLine("# Top-left interaction HUD");
+                sb.AppendLine($"HudEnabled={config.UI.HudEnabled}");
+                sb.AppendLine($"HudScale={config.UI.HudScale}");
+                sb.AppendLine($"HudColor={config.UI.HudColor}");
+                sb.AppendLine($"HudBgColor={config.UI.HudBgColor}");
+                sb.AppendLine("# Background opacity 0..255");
+                sb.AppendLine($"HudBgAlpha={config.UI.HudBgAlpha}");
+                sb.AppendLine("# top_left | top_right | bottom_left | bottom_right");
+                sb.AppendLine($"HudPosition={config.UI.HudPosition}");
+                sb.AppendLine($"HudBeep={config.UI.HudBeep}");
+                sb.AppendLine();
+
+                sb.AppendLine("[Behavior]");
+                sb.AppendLine("# How close the player must stand to trigger menu (meters)");
+                sb.AppendLine($"ResponseRadius={config.Behavior.ResponseRadius}");
+                sb.AppendLine("# 0=manual only, 100=very chatty");
+                sb.AppendLine($"ActivityLevel={config.Behavior.ActivityLevel}");
+                sb.AppendLine("# Master switch for executing LLM actions");
+                sb.AppendLine($"ActionsEnabled={config.Behavior.ActionsEnabled}");
+                sb.AppendLine($"AllowAttack={config.Behavior.AllowAttack}");
+                sb.AppendLine($"AllowAim={config.Behavior.AllowAim}");
+                sb.AppendLine($"AllowCallCops={config.Behavior.AllowCallCops}");
+                sb.AppendLine("# NPCs may initiate dialogue on their own");
+                sb.AppendLine($"AutonomousTalk={config.Behavior.AutonomousTalk}");
 
                 File.WriteAllText(ConfigPath, sb.ToString(),
                     Encoding.UTF8);
@@ -301,8 +468,7 @@ namespace GTA5MOD2026
             int parsed;
             if (int.TryParse(value,
                 NumberStyles.Integer,
-                CultureInfo.InvariantCulture, out parsed)
-                && parsed > 0)
+                CultureInfo.InvariantCulture, out parsed))
                 return parsed;
             return fallback;
         }
@@ -312,15 +478,13 @@ namespace GTA5MOD2026
             float parsed;
             if (float.TryParse(value,
                 NumberStyles.Float | NumberStyles.AllowThousands,
-                CultureInfo.InvariantCulture, out parsed)
-                && parsed > 0f)
+                CultureInfo.InvariantCulture, out parsed))
                 return parsed;
 
             if (float.TryParse(
                 value?.Replace(',', '.'),
                 NumberStyles.Float | NumberStyles.AllowThousands,
-                CultureInfo.InvariantCulture, out parsed)
-                && parsed > 0f)
+                CultureInfo.InvariantCulture, out parsed))
                 return parsed;
 
             return fallback;
