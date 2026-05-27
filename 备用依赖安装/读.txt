@@ -1,3 +1,0 @@
-download_whisper.bat
-这个是装音频的，我打包直接把那个音频模型给你们了，如果没用再执行这个bat文件
-模型放在C:\whisper-tiny！！！C:\whisper-tiny
