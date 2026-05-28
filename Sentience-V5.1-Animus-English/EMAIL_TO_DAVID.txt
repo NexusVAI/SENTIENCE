@@ -1,0 +1,20 @@
+Subject: Sentience V5.1 Animus Release — Could Use Your Eyes + A Favor
+
+Hi David,
+
+I hope you're doing well. I'm reaching out because we just pushed a major update to Sentience (V5.1.1 Animus), and honestly, I could use a second pair of eyes on a couple of things.
+
+Long story short: I'm not 100% sure the Nexus Mods upload went through correctly. I filled in the description, uploaded the files, set the version to 5.1.1, but I'm worried I might have missed something in the requirements or permissions tab. If you have a minute, could you check the page from a player's perspective and let me know if anything looks off?
+
+Also — and this is the bigger ask — could you take a look at the source repository? I want to make sure there's a trusted pair of eyes on it before the wider community starts downloading. No rush, but if you could confirm that nothing looks suspicious from a security standpoint, that'd mean a lot. The repo is clean (no obfuscated code, no network calls, fully offline), but I'd rather have someone I trust verify that than leave it to chance.
+
+Repository: [YOUR_GITHUB_REPO_URL_HERE]
+Nexus Mods page: [YOUR_NEXUS_MODS_URL_HERE]
+
+If you spot any issues with either the upload or the code, just shoot me a message. No pressure at all — I know you're busy.
+
+Either way, thanks for always being someone I can count on. Seriously.
+
+Best,
+[Your Name]
+Sentience Team
