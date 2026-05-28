@@ -38,7 +38,7 @@ namespace GTA5MOD2026
 
             _root = new NativeMenu(
                 "Sentience",
-                "V5 · Anima 控制台",
+                "V5.1 · Animus 控制台",
                 "全部设置即时生效，关闭菜单后自动保存");
             _pool.Add(_root);
 
@@ -47,6 +47,7 @@ namespace GTA5MOD2026
             BuildHudSection();
             BuildBehaviorSection();
             BuildHotkeySection();
+            BuildPluginsSection();    // V5.1 · Animus
             BuildQuickToggles();
         }
 
@@ -468,6 +469,79 @@ namespace GTA5MOD2026
             catch
             {
                 r = 255; g = 255; b = 255;
+            }
+        }
+
+        // ─── V5.1 · Animus — Plugins / Scenarios / Archetypes submenu ────────
+
+        private void BuildPluginsSection()
+        {
+            var menu = AddSubmenu(_root,
+                "插件 & 场景",
+                "Sentience SDK 加载结果（只读概览）");
+
+            var svc = GTA5MOD2026.Plugins.SentienceServices.Instance;
+
+            // ── Plugin list ──────────────────────────────────────────────
+            if (svc == null)
+            {
+                menu.Add(new NativeItem("[未初始化]",
+                    "SentienceServices 尚未启动"));
+            }
+            else
+            {
+                int pluginCount = svc.Plugins?.Plugins?.Count ?? 0;
+                menu.Add(new NativeItem(
+                    $"已加载插件: {pluginCount}",
+                    "扫描位置: " + (svc.PluginDirectoryPath ?? "")));
+
+                if (svc.Plugins != null)
+                {
+                    foreach (var p in svc.Plugins.Plugins)
+                    {
+                        string label = $"[{p.Status}] {p.Name} v{p.Version}";
+                        string desc = string.IsNullOrEmpty(p.StatusMessage)
+                            ? $"作者: {p.Author}"
+                            : $"作者: {p.Author} | {p.StatusMessage}";
+                        menu.Add(new NativeItem(label, desc));
+                    }
+                }
+
+                // ── Scenario list ────────────────────────────────────────
+                int scenarioCount = svc.Scenarios?.Scenarios?.Count ?? 0;
+                menu.Add(new NativeItem(
+                    $"已加载场景: {scenarioCount}",
+                    "扫描位置: " + (svc.ScenarioDirectoryPath ?? "")));
+
+                if (svc.Scenarios != null)
+                {
+                    foreach (var s in svc.Scenarios.Scenarios)
+                    {
+                        string label = $"{(s.Enabled ? "[✓]" : "[ ]")} " +
+                            $"{s.Name}";
+                        var item = new NativeCheckboxItem(label,
+                            $"id={s.Id} | 作者={s.Author}",
+                            s.Enabled);
+                        var captured = s;
+                        item.CheckboxChanged += (sender, e) =>
+                        {
+                            captured.Enabled = item.Checked;
+                        };
+                        menu.Add(item);
+                    }
+                }
+
+                // ── Archetype info ───────────────────────────────────────
+                int archetypeCount = 0;
+                if (svc.Archetypes != null)
+                {
+                    foreach (var _ in svc.Archetypes.All) archetypeCount++;
+                }
+                string iniDesc = string.IsNullOrEmpty(svc.LoadedArchetypeIniPath)
+                    ? "未发现 archetype_voices.ini （使用内置默认）"
+                    : "已加载: " + svc.LoadedArchetypeIniPath;
+                menu.Add(new NativeItem(
+                    $"声线档案数: {archetypeCount}", iniDesc));
             }
         }
     }

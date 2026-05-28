@@ -36,6 +36,10 @@ namespace GTA5MOD2026
         public bool AnimDictRequested;
         public string NpcName = "NPC";
         public string Personality = "冷漠";
+        // V5.1 · Animus — archetype id resolved at spawn-time from ped model
+        // hash (and possibly overridden by archetype_voices.ini).  "" means
+        // not yet resolved; "civilian" is the safe baseline fallback.
+        public string Archetype = "";
         public int Handle => Ped?.Handle ?? 0;
 
         public bool IsInteracting;

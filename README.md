@@ -1,11 +1,11 @@
 <div align="center">
 
-# 🧠 Sentience V5 · Anima
+# 🧠 Sentience V5.1 · Animus
 
-**第二代自研微调 GTA5 NPC AI Mod**
-**Self-aware GTA5 NPCs powered by a fine-tuned local LLM**
+**第二代自研微调 GTA5 NPC AI Mod · LSPDFR 级插件生态**
+**Self-aware GTA5 NPCs powered by a fine-tuned local LLM, now with an LSPDFR-class plugin ecosystem**
 
-> *我思 (Cogito) → 全知 (Omni) → **灵魂 (Anima)***
+> *我思 (Cogito) → 全知 (Omni) → 灵魂 (Anima) → **意志 (Animus)***
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)](https://github.com/NexusVAI/SENTIENCE)
 [![GTA V](https://img.shields.io/badge/GTA%20V-Steam%20%7C%20Epic%20%7C%20Rockstar-orange)](https://github.com/NexusVAI/SENTIENCE)
@@ -44,7 +44,8 @@
 - [🧠 模型说明](#-模型说明)
 - [🔌 自定义后端 / 接入云端 API](#-自定义后端--接入云端-api)
 - [🐛 常见问题 (FAQ)](#-常见问题-faq)
-- [🤝 贡献](#-贡献)
+- [� 插件生态 (V5.1 NEW)](#-插件生态-v51-new)
+- [�🤝 贡献](#-贡献)
 - [📜 License](#-license)
 - [🙏 致谢 / Credits](#-致谢--credits)
 
@@ -623,7 +624,98 @@ SentienceV5-Anima\
 
 ---
 
-## 🤝 贡献
+## � 插件生态 (V5.1 NEW)
+
+> *从 V5.1 Animus 起，Sentience 不再只是一个 mod —— 它是一个**平台**。*
+
+V5.1 Animus 引入了 **LSPDFR 级别**的插件生态。第三方可以用三种方式扩展 NPC 行为：
+
+### 三条扩展路径
+
+| 路径 | 你需要的 | 能做什么 | 典型例子 |
+|---|---|---|---|
+| **A · C# 插件** | C# + .NET 4.8 | 订阅事件、注入 prompt、自定义动作 | 警察 RP、帮派系统、商店交易 |
+| **B · JSON 场景** | 会写 JSON 即可 | 触发条件 + 注入 system prompt | 交通盘查、抢劫剧本、酒吧搭讪 |
+| **C · Archetype INI** | 改 INI 即可 | NPC 模型 → 声线 / 人格 / 行走风格 | 让机车党用低沉嗓音 + 霸气走路 |
+
+### 30+ 内置 Archetype
+
+街上每个 NPC 会按模型自动归类到一种 archetype（`biker`、`hipster`、`business`、`hollywood`、`gang_hood`、`homeless`、`tourist`、`police` …），每种 archetype 都带：
+
+- **中文人格 prompt** —— 注入到 LLM system message，让 NPC 不再千篇一律
+- **edge-tts 男/女声** —— biker 用 `zh-CN-YunjianNeural`（粗犷），hipster 用 `zh-CN-YunxiNeural`（年轻）等
+- **GTA 行走风格池** —— biker 走得霸气，business 走得正经
+
+### F5 → "插件 & 场景" 菜单
+
+```
+插件 & 场景 (Sentience SDK 加载结果)
+├── 已加载插件: 3
+│   ├── [Loaded]   Sentience.PoliceRP v1.0.0  作者: NexusV
+│   ├── [Loaded]   Sentience.Bartender v0.3.1 作者: Community
+│   └── [Faulted]  BadPlugin v0.0.1           OnLoad threw: ...
+├── 已加载场景: 5
+│   ├── [✓] 交通盘查      id=traffic_stop
+│   ├── [✓] 机车党挑衅    id=hostile_biker
+│   ├── [ ] 酒吧搭讪      (玩家可勾选启用)
+│   └── ...
+└── 声线档案数: 32          已加载: %Documents%\GTA5MOD2026\archetype_voices.ini
+```
+
+### 部署位置
+
+```
+<GTA V>\scripts\SentiencePlugins\*.dll               ← C# 插件
+%USERPROFILE%\Documents\GTA5MOD2026\Scenarios\*.json ← 场景脚本
+%USERPROFILE%\Documents\GTA5MOD2026\archetype_voices.ini ← 声线覆盖
+%USERPROFILE%\Documents\GTA5MOD2026\logs\plugins.log     ← 插件日志（2MB 轮转）
+```
+
+### 写一个最小插件
+
+```csharp
+using GTA5MOD2026.SDK;
+
+public sealed class MyPlugin : ISentiencePlugin
+{
+    public string Name          => "MyPlugin";
+    public string Author        => "你";
+    public string Version       => "1.0.0";
+    public string MinSdkVersion => "1.0.0";
+
+    public void OnLoad(IPluginContext ctx)
+    {
+        ctx.Events.NPCRequestingAI += (s, e) =>
+        {
+            if (e.Npc.Archetype == "biker")
+                e.ExtraSystemPrompt = "你今天极度暴躁。";
+        };
+    }
+    public void OnUnload() { }
+}
+```
+
+编译成 DLL，丢进 `scripts\SentiencePlugins\`，重启游戏，搞定。
+
+📖 **完整开发指南**：[`docs/Plugin-Development-Guide.md`](docs/Plugin-Development-Guide.md)
+📦 **示例代码**：`samples/Sentience.Plugins.PoliceRP/`（~100 行 C#，演示玩家拔枪 → NPC 报警）
+📜 **示例场景**：`samples/Scenarios/traffic_stop.json`、`samples/Scenarios/hostile_biker.json`
+
+### 与 LSPDFR / TTP3.1 的对比
+
+| 维度 | Sentience V5.1 Animus | TTP3.1 / LSPDFR 插件 |
+|---|---|---|
+| **AI 后端** | 本地 llama.cpp + 自研微调，离线运行 ✅ | Google Gemini，必须联网 + API Key |
+| **语言** | 中英双语，按 archetype 切方言 ✅ | 仅 en-US |
+| **长期记忆 / 觉醒** | 内置 ✅ | 无 |
+| **插件 SDK** | 公开 1.0 接口，跨小版本兼容 ✅ | 依赖 LSPDFR 内部 API |
+| **场景脚本** | JSON，无需 C# ✅ | XML，更繁琐 |
+| **archetype 声线** | 30+ 内置，可 INI 覆盖 ✅ | 70+，但锁死 Gemini 模型 |
+| **可视化菜单** | F5 LemonUI 全可视 ✅ | INI 文件 |
+
+---
+
+## �🤝 贡献
 
 欢迎 PR / Issue！特别欢迎：
 

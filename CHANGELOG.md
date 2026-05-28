@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.1.0] — Animus — 2026-05-28
+
+> *从「灵魂」到「意志」—— Anima 让 NPC 有了魂，Animus 让他们有了「能被外人塑造」的形。*
+
+### Added · 生态层（LSPDFR-Level Plugin Ecosystem）
+
+- **Sentience SDK 1.0** — 第三方可基于稳定的公开接口写 C# 插件，全部位于 `GTA5MOD2026.SDK` 命名空间，签名一旦发布不再变更：
+  - `ISentiencePlugin` — 插件入口（`Name / Author / Version / MinSdkVersion / OnLoad / OnUnload`）
+  - `IPluginContext` — 服务定位器（`Events / Logger / ConfigSnapshot / PluginDataDirectory`）
+  - `ISentienceEvents` — 事件中心：`NPCSpawned`、`NPCDespawned`、`NPCRequestingAI`、`NPCDialogue`、`PlayerInteraction`、`PlayerWeaponChanged`
+  - `INPCContext` — 只读 NPC 快照（含 `Archetype` / `Personality` / `ThreatLevel` / `PlayerReputation` / `AwakenStage` 等）
+- **PluginLoader** — 启动时自动扫描 `<GTA V>\scripts\SentiencePlugins\*.dll`，反射加载并 sandbox：
+  - SemVer 兼容性检查（`MinSdkVersion` 高于 host 即拒绝加载）
+  - 异常隔离：插件 `OnLoad` 抛出 → quarantine，不连累主 mod
+  - 自动 fault 计数：同一插件连续 3 次事件抛异常即被禁用
+  - 公共 `IPluginContext.Logger` 写入 `%Documents%\GTA5MOD2026\logs\plugins.log`，自动 2MB 轮转
+- **Scenario 引擎** — 不会 C# 也能写 NPC 剧本，JSON 放到 `%Documents%\GTA5MOD2026\Scenarios\`：
+  - 触发器类型：`always` / `ped_archetype` / `ped_model_hash` / `hotkey` / `zone_name` / `player_weapon`
+  - 距离过滤、玩家是否驾车、玩家是否持枪可作为条件
+  - `systemPromptAppend` 字段注入到 LLM system prompt
+  - 自带示例：`traffic_stop.json`（交通盘查）、`hostile_biker.json`（机车党挑衅）
+- **Archetype 声线库** — ped 模型 hash 自动映射到 30+ archetype，每个 archetype 提供：
+  - 中文人格 prompt（注入 system message，让 NPC 行为更贴合身份）
+  - edge-tts 男/女声短名（biker 用 `zh-CN-YunjianNeural`，hipster 用 `zh-CN-YunxiNeural` 等）
+  - GTA 行走风格 pool（biker 走得霸气，business 走得正经，TTP3.1 同款）
+  - 完全可在 `archetype_voices.ini` 中覆盖，含 `[PedHashOverrides]` 段
+- **WalkStyleSelector** — NPC spawn 时按 archetype 随机指派 walkstyle，让街头不再千人一面。
+
+### Added · 玩家可见
+
+- **F5 菜单新增 "插件 & 场景" 子菜单** — 显示：
+  - 已加载插件列表（状态 / 版本 / 作者 / 故障信息）
+  - 已加载场景列表，每条可勾选启用/禁用，即时生效
+  - Archetype 声线档案数 + 加载的 INI 路径
+- **NPCState.Archetype 字段** — F6 调试信息可看到当前 NPC 的 archetype 归类。
+- **示例插件 `Sentience.Plugins.PoliceRP`** — 演示玩家拔枪 → 附近平民优先 `call_cops` / `flee`，警察 archetype 反过来 `aim` / `attack`。源码 ~100 行，仅依赖公开 SDK。
+
+### Changed
+
+- 启动器和 F5 菜单的版本号 / 标题改为 `V5.1 · Animus`。
+- `NPCManager` 在构造时初始化 `SentienceServices`，所有 SDK hook 通过它单点出入，主流程零侵入。
+- LLM `system` prompt 构建末尾追加 archetype + scenario + plugin 三方贡献，顺序：archetype → scenario → plugin（先静态后动态）。
+- `NPCManager` 在 `OnTick` 每帧检测玩家武器状态变化，触发 `PlayerWeaponChanged` 事件（一次性 enum 比较，性能可忽略）。
+
+### Compatibility
+
+- **SDK ABI 锁定**：`GTA5MOD2026.SDK.*` 1.0 接口此后只能新增，不能改签名。第三方插件可以放心针对 1.0 编译。
+- 旧的 `config.ini` 完全向后兼容，无需迁移。
+- 5.0 Anima 的功能（F5 LemonUI 菜单 / 自绘 HUD / 行为门控 / 活跃度 / 死亡处理）全部保留并继续生效。
+
+### Internal
+
+- 新文件：
+  - `SDK/` — `ISentiencePlugin.cs`、`IPluginContext.cs`、`ISentienceLogger.cs`、`ISentienceEvents.cs`、`INPCContext.cs`、`SentienceSdk.cs`
+  - `Plugins/` — `PluginLoader.cs`、`PluginContext.cs`、`SentienceEventHub.cs`、`SentienceLogger.cs`、`NPCContextSnapshot.cs`、`SentienceServices.cs`
+  - `Plugins/Scenarios/` — `Scenario.cs`、`ScenarioLoader.cs`
+  - `Voices/` — `Archetype.cs`、`ArchetypeRegistry.cs`、`BuiltinArchetypes.cs`、`PedArchetypeMap.cs`、`WalkStyleSelector.cs`
+- 新增 `samples/` 子树：示例插件项目 + 两份示例场景 + 示例 archetype INI。
+- 编译产物体积影响：mod DLL 约 +30KB（净增 ~1300 行 C#），无新外部依赖。
+
+---
+
 ## [5.0.0] — Anima — 2026-05-27
 
 ### Added
@@ -124,6 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[5.1.0]: https://github.com/NexusVAI/SENTIENCE/releases/tag/v5.1.0
 [5.0.0]: https://github.com/NexusVAI/SENTIENCE/releases/tag/v5.0.0
 [4.1.0]: https://github.com/NexusVAI/SENTIENCE/releases/tag/v4.1.0
 [4.0.0]: https://github.com/NexusVAI/SENTIENCE/releases/tag/v4.0.0

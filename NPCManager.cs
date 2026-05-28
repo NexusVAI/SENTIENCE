@@ -9,6 +9,10 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using GTA5MOD2026.Plugins;
+using GTA5MOD2026.Plugins.Scenarios;
+using GTA5MOD2026.SDK;
+using GTA5MOD2026.Voices;
 
 namespace GTA5MOD2026
 {
@@ -148,6 +152,17 @@ namespace GTA5MOD2026
             {
                 awakenSystem.SetSpeed(
                     aiManager.Config.Awakening.Speed);
+            }
+
+            // V5.1 · Animus — bootstrap plugin / scenario / archetype layer.
+            // SentienceServices.Initialize is null-safe and never throws,
+            // even if the plugin folder doesn't exist yet.  All subsequent
+            // hooks read SentienceServices.Instance once and tolerate null.
+            try { SentienceServices.Initialize(aiManager.Config); }
+            catch (Exception ex)
+            {
+                ShowNotification(
+                    "~y~Sentience plugin layer disabled: " + ex.Message);
             }
 
             // Pre-warm LLM — first request is always slow
@@ -352,6 +367,10 @@ namespace GTA5MOD2026
 
             var player = Game.Player.Character;
             if (player == null || !player.Exists()) return;
+
+            // V5.1 · Animus — detect weapon draw/holster transitions and
+            // broadcast to plugins.  Cheap (one enum compare per tick).
+            PollPlayerWeaponChange(player, gameTime);
 
             // ── Death / respawn handling.  The vanilla DISPLAY_HELP queue
             //    gets jammed by the hospital script after a death, so we
@@ -622,7 +641,12 @@ namespace GTA5MOD2026
                         };
                         activeState.InitializeNeeds();
                         activeState.InitializeIdentity();
+                        // V5.1 · Animus — resolve archetype from ped model
+                        // hash so plugins / scenarios / TTS know who this is.
+                        ResolveArchetypeForState(activeState);
+                        TryApplyArchetypeWalkstyle(activeState);
                         npcStateCache[stableId] = activeState;
+                        RaiseNpcSpawned(activeState);
                     }
                     else
                     {
@@ -686,6 +710,11 @@ namespace GTA5MOD2026
                     npcStateCache[removedState.StableId]
                         = removedState;
                 }
+                // V5.1 · Animus — let plugins know an NPC has left.
+                RaiseNpcDespawned(removedState,
+                    removedState != null && removedState.IsValid()
+                        ? "out_of_range"
+                        : "ped_invalid");
                 memoryManager.UnbindHandle(h);
                 ClearPendingRequestsForHandle(h);
                 npcStates.Remove(h);
@@ -1118,6 +1147,7 @@ namespace GTA5MOD2026
 
             targetState.RecordCompliment(Game.GameTime / 1000f);
             targetState.LastInteractionType = "compliment";
+            RaisePlayerInteraction(targetState, "compliment", compliment);
             SendInteraction(targetState, compliment);
         }
 
@@ -1143,6 +1173,7 @@ namespace GTA5MOD2026
 
             targetState.RecordInsult(Game.GameTime / 1000f);
             targetState.LastInteractionType = "insult";
+            RaisePlayerInteraction(targetState, "insult", insult);
             SendInteraction(targetState, insult);
         }
 
@@ -1389,6 +1420,16 @@ namespace GTA5MOD2026
                     "*后退一步* 你好\n" +
                     "（微笑着说）你好\n" +
                     "我想了想，决定说：你好\n";
+
+                // V5.1 · Animus — append archetype / scenario / plugin
+                // contributions to the system prompt.  Each layer is
+                // best-effort and never raises; missing pieces just no-op.
+                string extras = ComposeExtraSystemPrompt(
+                    state, "player", playerText);
+                if (!string.IsNullOrWhiteSpace(extras))
+                {
+                    systemPrompt += "\n" + extras;
+                }
 
                 var perception = npcPerception.Perceive(
                     state, Game.Player.Character, npcStates);
@@ -1860,6 +1901,14 @@ namespace GTA5MOD2026
                 );
 
                 ShowNPCResponse(state, dialogue, emotion);
+
+                // V5.1 · Animus — broadcast the final dialogue/action to
+                // plugins.  Mutating resp here would not affect the game
+                // because we've already executed; this is purely an event.
+                resp.dialogue = dialogue;
+                resp.action = action;
+                resp.emotion = emotion;
+                RaiseNpcDialogue(state, resp);
 
                 state.Ped.Task.ClearAll();
                 ExecuteLLMAction(state, action);
@@ -2499,6 +2548,195 @@ namespace GTA5MOD2026
                     }
                     break;
             }
+        }
+
+        // =====================================================================
+        //  V5.1 · Animus — SDK Integration Helpers
+        // ---------------------------------------------------------------------
+        //  All Sentience.Plugins / Scenarios / Voices integration funnels
+        //  through these private helpers so the rest of NPCManager stays
+        //  unaware of the new layer.  Each one is null-safe — if
+        //  SentienceServices failed to bootstrap, the helpers no-op.
+        // =====================================================================
+
+        private void ResolveArchetypeForState(NPCState state)
+        {
+            if (state?.Ped == null) return;
+            try
+            {
+                uint hash = (uint)state.Ped.Model.Hash;
+                var svc = SentienceServices.Instance;
+                if (svc != null)
+                    state.Archetype = svc.Archetypes
+                        .Resolve(hash)?.Id ?? PedArchetypeMap.Civilian;
+                else
+                    state.Archetype = PedArchetypeMap.Resolve(hash);
+            }
+            catch { state.Archetype = PedArchetypeMap.Civilian; }
+        }
+
+        private void TryApplyArchetypeWalkstyle(NPCState state)
+        {
+            if (state?.Ped == null || string.IsNullOrEmpty(state.Archetype))
+                return;
+            var svc = SentienceServices.Instance;
+            var archetype = svc?.Archetypes?.Get(state.Archetype);
+            if (archetype == null) return;
+            try
+            {
+                WalkStyleSelector.Apply(state.Ped,
+                    archetype.Walkstyles, _rand);
+            }
+            catch { /* purely cosmetic */ }
+        }
+
+        private INPCContext BuildNpcContext(NPCState state)
+        {
+            if (state == null) return null;
+            string zoneName = "";
+            try
+            {
+                if (state.Ped != null && state.Ped.Exists())
+                    zoneName = NPCPerception.GetZoneName(state.Ped.Position);
+            }
+            catch { }
+            return NPCContextSnapshot.From(state, state.Archetype, zoneName);
+        }
+
+        private void RaiseNpcSpawned(NPCState state)
+        {
+            var svc = SentienceServices.Instance;
+            if (svc?.Plugins?.Hub == null) return;
+            try
+            {
+                svc.Plugins.Hub.RaiseNpcSpawned(
+                    BuildNpcContext(state), Game.GameTime / 1000f);
+            }
+            catch { }
+        }
+
+        private void RaiseNpcDespawned(NPCState state, string reason)
+        {
+            var svc = SentienceServices.Instance;
+            if (svc?.Plugins?.Hub == null || state == null) return;
+            try
+            {
+                svc.Plugins.Hub.RaiseNpcDespawned(
+                    BuildNpcContext(state), reason,
+                    Game.GameTime / 1000f);
+            }
+            catch { }
+        }
+
+        private void RaiseNpcDialogue(NPCState state, AIResponse resp)
+        {
+            var svc = SentienceServices.Instance;
+            if (svc?.Plugins?.Hub == null || resp == null) return;
+            try
+            {
+                svc.Plugins.Hub.RaiseNpcDialogue(
+                    BuildNpcContext(state),
+                    resp.dialogue ?? "",
+                    resp.action ?? "",
+                    resp.emotion ?? "",
+                    resp.intent ?? "",
+                    Game.GameTime / 1000f);
+            }
+            catch { }
+        }
+
+        private void RaisePlayerInteraction(NPCState state,
+            string kind, string playerText)
+        {
+            var svc = SentienceServices.Instance;
+            if (svc?.Plugins?.Hub == null) return;
+            try
+            {
+                svc.Plugins.Hub.RaisePlayerInteraction(
+                    BuildNpcContext(state),
+                    kind, playerText ?? "",
+                    Game.GameTime / 1000f);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Compose archetype + scenario + plugin contributions into a single
+        /// string appended to the LLM system prompt.  Returns "" if no
+        /// contribution is made.
+        /// </summary>
+        private string ComposeExtraSystemPrompt(NPCState state,
+            string interactionType, string playerInput)
+        {
+            var svc = SentienceServices.Instance;
+            if (svc == null || state == null) return "";
+            try
+            {
+                var npcContext = BuildNpcContext(state);
+                var facts = BuildScenarioFacts(state, interactionType);
+                return svc.ComposeExtraSystemPrompt(
+                    npcContext, playerInput, interactionType,
+                    facts, Game.GameTime / 1000f) ?? "";
+            }
+            catch { return ""; }
+        }
+
+        // Cache the last seen "armed" state of the player so we only fire
+        // the PlayerWeaponChanged event on actual transitions.
+        private bool _lastPlayerArmed;
+        private WeaponHash _lastPlayerWeapon = WeaponHash.Unarmed;
+
+        private void PollPlayerWeaponChange(Ped player, float gameTime)
+        {
+            var svc = SentienceServices.Instance;
+            if (svc?.Plugins?.Hub == null) return;
+            try
+            {
+                WeaponHash current = WeaponHash.Unarmed;
+                if (player.Weapons != null && player.Weapons.Current != null)
+                    current = player.Weapons.Current.Hash;
+                bool isArmed = current != WeaponHash.Unarmed;
+                if (isArmed == _lastPlayerArmed
+                    && current == _lastPlayerWeapon)
+                    return;
+
+                _lastPlayerArmed = isArmed;
+                _lastPlayerWeapon = current;
+                svc.Plugins.Hub.RaisePlayerWeaponChanged(
+                    isArmed, current.ToString(), gameTime);
+            }
+            catch { }
+        }
+
+        private ScenarioMatchFacts BuildScenarioFacts(
+            NPCState state, string hotkey)
+        {
+            var facts = new ScenarioMatchFacts
+            {
+                Archetype = state?.Archetype ?? "",
+                Hotkey = hotkey ?? ""
+            };
+            try
+            {
+                var player = Game.Player.Character;
+                facts.PlayerInVehicle = player != null && player.IsInVehicle();
+                facts.PlayerArmed = player != null
+                    && player.Weapons != null
+                    && player.Weapons.Current != null
+                    && player.Weapons.Current.Hash != WeaponHash.Unarmed;
+                if (state?.Ped != null && state.Ped.Exists()
+                    && player != null && player.Exists())
+                {
+                    facts.DistanceMeters = Vector3.Distance(
+                        state.Ped.Position, player.Position);
+                    facts.ZoneName = NPCPerception.GetZoneName(
+                        state.Ped.Position);
+                    facts.ModelHashHex = string.Format(
+                        "0x{0:X8}", (uint)state.Ped.Model.Hash);
+                }
+            }
+            catch { }
+            return facts;
         }
     }
 }
