@@ -1,0 +1,30 @@
+{
+  "id": "traffic_stop",
+  "name": "交通盘查",
+  "author": "NexusV",
+  "description": "玩家步行靠近一名 business / wealthy 路人时，把场景设定成警察拦下市民进行盘问。NPC 配合度由本身人格决定。",
+  "enabled": true,
+
+  "trigger": {
+    "type":              "ped_archetype",
+    "archetypes":        ["business", "wealthy", "hollywood"],
+    "playerInVehicle":   false,
+    "playerArmed":       false,
+    "minDistanceMeters": 0.0,
+    "maxDistanceMeters": 4.0
+  },
+
+  "systemPromptAppend": "【场景：交通盘查】\n你被警察叫住盘问，立刻站定面向对方。\n- 性格友善：主动出示证件，简短礼貌回答。\n- 性格暴躁：抱怨警察滥用职权，但不动手。\n- 性格胆小：紧张结巴，担心被诬陷。\n- 你不会主动逃跑，除非警察明显敌意（aim / attack）。\n- 直到警察明确说'你可以走了 / 没事了'，否则不能离开。\n输出动作偏向：speak / nod / shake_head。",
+
+  "lines": [
+    { "from": "player", "text": "停下！我是警察，例行盘查。" },
+    { "from": "npc",    "text": "好的警官，需要看证件吗？" },
+    { "from": "player", "text": "把驾照拿出来。" },
+    { "from": "npc",    "text": "稍等，我从包里拿。" }
+  ],
+
+  "actions": [
+    { "name": "show_id",      "trigger": "驾照",   "ai": false },
+    { "name": "explain_self", "trigger": "为什么", "ai": true  }
+  ]
+}

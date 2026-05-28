@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Sentience Plugin: PoliceRP (sample)
+    Demonstrates the minimum Sentience SDK plugin:
+      1. Implements ISentiencePlugin
+      2. Subscribes to PlayerWeaponChanged / NPCRequestingAI
+      3. Steers nearby NPCs into a "call cops!" reaction when the
+         player draws a weapon
+    Target framework matches the host mod (net48 / SHVDN3 compatible).
+    The compiled DLL drops into:
+      &lt;GTA V&gt;\scripts\SentiencePlugins\Sentience.Plugins.PoliceRP.dll
+  -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <Configurations>Debug;Release</Configurations>
+    <LangVersion>7.3</LangVersion>
+    <AssemblyName>Sentience.Plugins.PoliceRP</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Plugin only consumes the public SDK contracts.  The host mod DLL
+         must be in the reference path so we can resolve the SDK types. -->
+    <Reference Include="GTA5MOD2026">
+      <HintPath>..\..\GTA5MOD2026\bin\Release\net48\GTA5MOD2026.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

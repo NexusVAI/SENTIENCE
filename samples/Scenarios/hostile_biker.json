@@ -1,0 +1,17 @@
+{
+  "id": "hostile_biker",
+  "name": "机车党挑衅",
+  "author": "NexusV",
+  "description": "玩家拔出武器接近 biker / gang_hood 时，触发对方挑衅式回应。",
+  "enabled": true,
+
+  "trigger": {
+    "type":              "ped_archetype",
+    "archetypes":        ["biker", "gang_hood", "gang_latino", "punk"],
+    "playerArmed":       true,
+    "minDistanceMeters": 0.0,
+    "maxDistanceMeters": 12.0
+  },
+
+  "systemPromptAppend": "【场景：街头冲突】\n你是街头硬汉，玩家正手持武器靠近你。\n- 你不会跪下求饶，也不会马上跑开。\n- 你会先口头挑衅一次（动作 = aim 或 speak）。\n- 如果玩家继续靠近 3 米内且仍持枪，你会动手（动作 = attack）。\n- 不要使用 cower 或 call_cops，你不靠条子。\n语气粗鲁，可以骂人。"
+}
