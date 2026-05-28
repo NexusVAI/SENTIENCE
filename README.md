@@ -313,7 +313,13 @@ TTSServer=http://127.0.0.1:5111
 VoiceEnabled=True
 
 [STT]
-WhisperModelPath=C:\whisper-tiny
+# 留空 = 自动按以下顺序查找：
+#   1. %USERPROFILE%\Documents\GTA5MOD2026\whisper-tiny\
+#   2. <GTA V>\scripts\whisper-tiny\
+#   3. <GTA V>\whisper-tiny\
+#   4. C:\whisper-tiny\
+# 显式填路径则强制使用该路径。
+WhisperModelPath=
 
 [Awakening]
 Enabled=True
@@ -587,6 +593,26 @@ SentienceV5-Anima\
 2. F5 菜单 → `快捷开关 → TTS 语音` 是否打开
 3. `config.ini [TTS] VoiceEnabled=True`
 4. edge-tts **依赖网络**（微软 CDN）——纯离线环境请改 piper
+
+</details>
+
+<details>
+<summary><b>Q: 按 J 录音没反应 / 提示"找不到 whisper-tiny" (V5.1.1)</b></summary>
+
+把发布包里的 `whisper-tiny\` 文件夹整个放到下面**任意一个**位置即可（按优先级，找到就用）：
+
+1. `%USERPROFILE%\Documents\GTA5MOD2026\whisper-tiny\` ← **推荐**
+2. `<GTA V>\scripts\whisper-tiny\`（跟 mod DLL 同级）
+3. `<GTA V>\whisper-tiny\`（游戏根目录）
+4. `C:\whisper-tiny\`（V5 老路径，仍然兼容）
+
+也可以在 `config.ini` 里 `[STT] WhisperModelPath=完整路径` 显式指定。
+
+另外还需要：
+- 装 Python 3.10+ 并把它加入 PATH（mod 会按 `python` → `py -3` 顺序探测）
+- 在该 Python 上：`pip install sounddevice numpy faster-whisper`
+
+按 J 时如果还是不行，看 `<GTA V>\ScriptHookVDotNet.log` 里 SpeechManager 抛的具体异常。V5.1.1 起所有错误会附带可执行的中文修复指令。
 
 </details>
 

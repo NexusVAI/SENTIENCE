@@ -65,8 +65,10 @@ namespace GTA5MOD2026
 
         public class STTConfig
         {
-            public string WhisperModelPath { get; set; }
-                = @"C:\whisper-tiny";
+            // V5.1.1 · Empty by default → SpeechManager auto-discovers it
+            // from %Docs%\GTA5MOD2026\whisper-tiny\ / scripts\whisper-tiny\
+            // / C:\whisper-tiny\.  Set explicitly here only to override.
+            public string WhisperModelPath { get; set; } = "";
         }
 
         public class AwakeningConfig

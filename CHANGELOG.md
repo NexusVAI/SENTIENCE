@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [5.1.1] — Animus Hotfix — 2026-05-28
+
+> *补一颗螺丝。语音输入终于能开箱即用。*
+
+### Fixed · 语音输入 (STT) 端到端可用
+
+- **Whisper 模型路径自动发现** —— 旧版只在 `C:\whisper-tiny\` 找模型，没手动复制的玩家全部 `ERROR:no_speech`。新版按优先级链查找：
+  1. `config.ini` 的 `[STT] WhisperModelPath`（显式覆盖）
+  2. `%USERPROFILE%\Documents\GTA5MOD2026\whisper-tiny\`
+  3. `<GTA V>\scripts\whisper-tiny\`（drop-in 位置，跟 mod DLL 同级）
+  4. `<GTA V>\whisper-tiny\`（游戏根目录）
+  5. `C:\whisper-tiny\`（V5 历史默认，兼容老用户）
+- **Python 命令自动发现** —— 旧版硬编码 `FileName = "python"`，没把 Python 加到 PATH 的玩家直接 `Python not found`。新版按 `python` → `py -3` 顺序探测，找到第一个可用的就用。
+- **短路 + 友好错误消息** —— 找不到模型 / Python 时不再傻等 5 秒，立刻弹中文提示告诉玩家具体怎么修：
+  - 缺模型：`"找不到 whisper-tiny 模型。请把 whisper-tiny 文件夹放到 %USERPROFILE%\Documents\GTA5MOD2026\ 下..."`
+  - 缺 Python：`"找不到 Python。请安装 Python 3.10+ 并把它加入 PATH，然后执行: pip install sounddevice numpy faster-whisper"`
+
+### Added · 发布包
+
+- **`whisper-tiny/` 75MB STT 模型** 现在直接打进发布包根目录。玩家解压即用，不需要再去额外下载。
+- **`PACKAGE_V5.1.ps1`** 加入 whisper-tiny 多路径检测 + idempotent 拷贝（同尺寸自动跳过）。
+- **`PACKAGE_V5.1.ps1`** 修复一处遗漏：之前没拷 `_internal/`（PyInstaller --onedir 的 Python 运行时，250MB / 3316 文件），导致 launcher 双击报 `Failed to load python313.dll`。现在强制随 `SentienceV5.exe` 同步。
+
+### Changed
+
+- `ModConfig.STTConfig.WhisperModelPath` 默认值从 `"C:\whisper-tiny"` 改为 `""`（空 = 让 SpeechManager 自动找）。已存在的 config.ini **完全向后兼容**：写了显式路径 → 用你写的；为空 / 用旧默认 → 走自动发现。
+- `SpeechManager.RecordAndTranscribe` 使用解析后的 `_pythonCmd` 启动子进程，支持 `python` 和 `py -3` 两种调用方式。
+
+### Internal
+
+- `SpeechManager.cs`：新增 `ResolveWhisperModelPath()` 和 `ResolvePythonCommand()` 两个静态辅助方法，构造函数一次性解析并缓存结果，运行时零开销。
+- 主流程零侵入：`HandleVoiceInput → speechManager.RecordAndTranscribe(...)` 调用点完全没动，所有改动都在 SpeechManager 内部。
+
+---
+
 ## [5.1.0] — Animus — 2026-05-28
 
 > *从「灵魂」到「意志」—— Anima 让 NPC 有了魂，Animus 让他们有了「能被外人塑造」的形。*
@@ -186,6 +221,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[5.1.1]: https://github.com/NexusVAI/SENTIENCE/releases/tag/v5.1.1
 [5.1.0]: https://github.com/NexusVAI/SENTIENCE/releases/tag/v5.1.0
 [5.0.0]: https://github.com/NexusVAI/SENTIENCE/releases/tag/v5.0.0
 [4.1.0]: https://github.com/NexusVAI/SENTIENCE/releases/tag/v4.1.0

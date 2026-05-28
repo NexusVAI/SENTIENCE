@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
@@ -18,20 +19,106 @@ namespace GTA5MOD2026
             Environment.GetFolderPath(
                 Environment.SpecialFolder.MyDocuments),
             "GTA5MOD2026", "temp");
+
+        // V5.1.1 · Resolved Whisper model path (auto-discovered if config blank).
+        //   May be empty string if no install was found — STT then short-circuits
+        //   to a friendly error rather than launching Python in vain.
         private readonly string _modelPath;
+
+        // V5.1.1 · Resolved python launcher command ("python" / "py" / ...).
+        //   Empty if Python is not on PATH.
+        private readonly string _pythonCmd;
 
         public SpeechManager()
         {
             var config = ModConfig.Load();
-            _modelPath = string.IsNullOrWhiteSpace(
-                config?.STT?.WhisperModelPath)
-                ? @"C:\whisper-tiny"
-                : config.STT.WhisperModelPath;
+            _modelPath = ResolveWhisperModelPath(
+                config?.STT?.WhisperModelPath);
+            _pythonCmd = ResolvePythonCommand();
 
             if (!Directory.Exists(TempDir))
                 Directory.CreateDirectory(TempDir);
 
             WriteSttScript();
+        }
+
+        // V5.1.1 · Search a priority chain for a usable whisper-tiny directory.
+        //   1. Explicit config path (if set and non-empty)
+        //   2. %Documents%\GTA5MOD2026\whisper-tiny\        ← preferred user data
+        //   3. <GTA>\scripts\whisper-tiny\                  ← drop-in next to DLL
+        //   4. <GTA>\whisper-tiny\                          ← legacy
+        //   5. C:\whisper-tiny\                             ← legacy V5
+        //  Returns the first directory containing a `model.bin` file, else "".
+        private static string ResolveWhisperModelPath(string configPath)
+        {
+            var candidates = new List<string>();
+            if (!string.IsNullOrWhiteSpace(configPath))
+                candidates.Add(configPath);
+
+            string docs = Environment.GetFolderPath(
+                Environment.SpecialFolder.MyDocuments);
+            candidates.Add(Path.Combine(docs,
+                "GTA5MOD2026", "whisper-tiny"));
+
+            string scriptsDir = AppDomain.CurrentDomain.BaseDirectory;
+            if (!string.IsNullOrEmpty(scriptsDir))
+            {
+                candidates.Add(Path.Combine(scriptsDir, "whisper-tiny"));
+                var parent = Directory.GetParent(scriptsDir);
+                if (parent != null)
+                    candidates.Add(Path.Combine(
+                        parent.FullName, "whisper-tiny"));
+            }
+
+            candidates.Add(@"C:\whisper-tiny");
+
+            foreach (var p in candidates)
+            {
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(p)) continue;
+                    if (!Directory.Exists(p)) continue;
+                    if (File.Exists(Path.Combine(p, "model.bin")))
+                        return p;
+                }
+                catch { }
+            }
+            return "";
+        }
+
+        // V5.1.1 · Find a Python launcher. Prefers `python` (most common),
+        //  falls back to `py -3` (Windows launcher) — both signaled via the
+        //  return string which is split at first space.
+        private static string ResolvePythonCommand()
+        {
+            foreach (var cmd in new[] { "python", "py -3" })
+            {
+                try
+                {
+                    string fileName = cmd.Split(' ')[0];
+                    string args = cmd.Contains(" ")
+                        ? cmd.Substring(cmd.IndexOf(' ') + 1) + " --version"
+                        : "--version";
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = fileName,
+                        Arguments = args,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using (var proc = Process.Start(psi))
+                    {
+                        if (proc == null) continue;
+                        if (proc.WaitForExit(2000) && proc.ExitCode == 0)
+                            return cmd;
+                        try { if (!proc.HasExited) proc.Kill(); } catch { }
+                    }
+                }
+                catch { }
+            }
+            return "";
         }
 
         private void WriteSttScript()
@@ -114,6 +201,24 @@ print('DONE', flush=True)
         {
             if (_isRecording) return;
 
+            // V5.1.1 · Short-circuit with actionable errors BEFORE spawning
+            // a process — saves the user 5 seconds of silent waiting.
+            if (string.IsNullOrEmpty(_modelPath))
+            {
+                onError?.Invoke(new Exception(
+                    "找不到 whisper-tiny 模型。请把 whisper-tiny 文件夹放到 " +
+                    "%USERPROFILE%\\Documents\\GTA5MOD2026\\ 下，或在 config.ini " +
+                    "的 [STT] 段设置 WhisperModelPath=完整路径"));
+                return;
+            }
+            if (string.IsNullOrEmpty(_pythonCmd))
+            {
+                onError?.Invoke(new Exception(
+                    "找不到 Python。请安装 Python 3.10+ 并把它加入 PATH，" +
+                    "然后执行: pip install sounddevice numpy faster-whisper"));
+                return;
+            }
+
             Task.Run(() =>
             {
                 _isRecording = true;
@@ -128,10 +233,15 @@ print('DONE', flush=True)
                     if (File.Exists(resultFile))
                         File.Delete(resultFile);
 
+                    // V5.1.1 · Use resolved python command (supports `py -3`).
+                    string pyExe = _pythonCmd.Split(' ')[0];
+                    string pyPrefix = _pythonCmd.Contains(" ")
+                        ? _pythonCmd.Substring(_pythonCmd.IndexOf(' ') + 1) + " "
+                        : "";
                     var psi = new ProcessStartInfo
                     {
-                        FileName = "python",
-                        Arguments = $"\"{scriptPath}\"",
+                        FileName = pyExe,
+                        Arguments = pyPrefix + $"\"{scriptPath}\"",
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
@@ -145,7 +255,7 @@ print('DONE', flush=True)
                         {
                             _mainQueue.Enqueue(()
                                 => onError?.Invoke(
-                                    new Exception("Python not found")));
+                                    new Exception("Python 启动失败 (Process.Start 返回 null)")));
                             return;
                         }
 
